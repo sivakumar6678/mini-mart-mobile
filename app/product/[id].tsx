@@ -1,4 +1,5 @@
 import { Button } from '@/components/common/Button';
+import { ProductCard } from '@/components/product/ProductCard';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { Colors } from '@/constants/Colors';
@@ -7,10 +8,21 @@ import { useColorScheme } from '@/hooks/useColorScheme';
 import { Product } from '@/services/product.service';
 import { formatCurrency } from '@/utils/formatCurrency';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Dimensions, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Animated,
+  Dimensions,
+  FlatList,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
+} from 'react-native';
 
 // Mock data for products (same as in home screen)
 const PRODUCTS: Product[] = [
@@ -22,7 +34,11 @@ const PRODUCTS: Product[] = [
     discountedPrice: 99,
     quantity: 100,
     category: 'Fruits',
-    images: ['https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6'],
+    images: [
+      'https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6',
+      'https://images.unsplash.com/photo-1570913149827-d2ac84ab3f9a',
+      'https://images.unsplash.com/photo-1568702846914-96b305d2aaeb'
+    ],
     shopId: 1,
   },
   {
@@ -63,9 +79,13 @@ export default function ProductDetailScreen() {
   const [product, setProduct] = useState<Product | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [quantity, setQuantity] = useState(1);
+  const [isAddingToCart, setIsAddingToCart] = useState(false);
+  const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const { addToCart } = useCart();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  const scrollX = useRef(new Animated.Value(0)).current;
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
   useEffect(() => {
     const loadProduct = async () => {
@@ -75,6 +95,15 @@ export default function ProductDetailScreen() {
         setTimeout(() => {
           const foundProduct = PRODUCTS.find(p => p.id === Number(id));
           setProduct(foundProduct || null);
+          
+          // Find related products (same category)
+          if (foundProduct) {
+            const related = PRODUCTS.filter(
+              p => p.category === foundProduct.category && p.id !== foundProduct.id
+            );
+            setRelatedProducts(related);
+          }
+          
           setIsLoading(false);
         }, 500);
       } catch (error) {
@@ -89,25 +118,55 @@ export default function ProductDetailScreen() {
   const handleAddToCart = async () => {
     if (product) {
       try {
+        setIsAddingToCart(true);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         await addToCart(product, quantity);
-        router.push('/cart');
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        
+        // Show success animation before navigating
+        setTimeout(() => {
+          router.push('/cart');
+        }, 300);
       } catch (error) {
         console.error('Error adding to cart:', error);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      } finally {
+        setIsAddingToCart(false);
       }
     }
   };
 
   const incrementQuantity = () => {
     if (product && quantity < product.quantity) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       setQuantity(quantity + 1);
     }
   };
 
   const decrementQuantity = () => {
     if (quantity > 1) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       setQuantity(quantity - 1);
     }
   };
+
+  const handleImageScroll = Animated.event(
+    [{ nativeEvent: { contentOffset: { x: scrollX } } }],
+    { useNativeDriver: false }
+  );
+
+  useEffect(() => {
+    if (product?.images?.length) {
+      const listener = scrollX.addListener(({ value }) => {
+        const index = Math.round(value / width);
+        setCurrentImageIndex(index);
+      });
+      
+      return () => {
+        scrollX.removeListener(listener);
+      };
+    }
+  }, [product]);
 
   if (isLoading) {
     return (
@@ -128,7 +187,10 @@ export default function ProductDetailScreen() {
         </ThemedText>
         <Button
           title="Go Back"
-          onPress={() => router.back()}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            router.back();
+          }}
           style={styles.backButton}
         />
       </ThemedView>
@@ -137,34 +199,98 @@ export default function ProductDetailScreen() {
 
   const hasDiscount = product.discountedPrice !== undefined && product.discountedPrice < product.price;
   const currentPrice = hasDiscount ? product.discountedPrice! : product.price;
+  const discountPercentage = hasDiscount 
+    ? Math.round((1 - product.discountedPrice! / product.price) * 100) 
+    : 0;
 
   return (
     <ThemedView style={styles.container}>
-      <Stack.Screen options={{ title: product.name }} />
+      <Stack.Screen 
+        options={{ 
+          title: product.name,
+          headerRight: () => (
+            <TouchableOpacity 
+              style={styles.favoriteButton}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+            >
+              <Ionicons name="heart-outline" size={24} color={colors.text} />
+            </TouchableOpacity>
+          )
+        }} 
+      />
       
       <ScrollView showsVerticalScrollIndicator={false}>
-        <Image
-          source={{ uri: product.images[0] }}
-          style={styles.productImage}
-          contentFit="cover"
-        />
+        {/* Image Carousel */}
+        <View style={styles.imageCarouselContainer}>
+          <Animated.FlatList
+            data={product.images}
+            renderItem={({ item }) => (
+              <Image
+                source={{ uri: item }}
+                style={styles.productImage}
+                contentFit="cover"
+              />
+            )}
+            keyExtractor={(_, index) => index.toString()}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onScroll={handleImageScroll}
+            scrollEventThrottle={16}
+          />
+          
+          {/* Image Pagination Dots */}
+          {product.images.length > 1 && (
+            <View style={styles.paginationContainer}>
+              {product.images.map((_, index) => (
+                <View
+                  key={index}
+                  style={[
+                    styles.paginationDot,
+                    { 
+                      backgroundColor: index === currentImageIndex 
+                        ? colors.tint 
+                        : colors.tabIconDefault + '50',
+                      width: index === currentImageIndex ? 20 : 8,
+                    }
+                  ]}
+                />
+              ))}
+            </View>
+          )}
+          
+          {hasDiscount && (
+            <View style={styles.discountBadge}>
+              <Text style={styles.discountText}>-{discountPercentage}%</Text>
+            </View>
+          )}
+        </View>
         
-        {hasDiscount && (
-          <View style={[styles.discountBadge, { backgroundColor: colors.tint }]}>
-            <ThemedText style={styles.discountText}>
-              {Math.round((1 - product.discountedPrice! / product.price) * 100)}% OFF
-            </ThemedText>
-          </View>
-        )}
-        
-        <View style={styles.contentContainer}>
-          <View style={styles.header}>
-            <ThemedText type="title">{product.name}</ThemedText>
-            <View style={styles.categoryBadge}>
-              <ThemedText style={styles.categoryText}>{product.category}</ThemedText>
+        <View style={[styles.contentContainer, { backgroundColor: colors.cardBackground }]}>
+          {/* Shop Info */}
+          <View style={styles.shopInfoContainer}>
+            <View style={styles.shopInfo}>
+              <Ionicons name="storefront-outline" size={16} color={colors.tint} />
+              <ThemedText style={styles.shopName}>Organic Farms</ThemedText>
+            </View>
+            <View style={styles.ratingContainer}>
+              <Ionicons name="star" size={16} color="#FFD700" />
+              <Text style={[styles.ratingText, { color: colors.text }]}>4.8</Text>
+              <Text style={[styles.ratingCount, { color: colors.tabIconDefault }]}>(120)</Text>
             </View>
           </View>
           
+          {/* Product Title and Category */}
+          <View style={styles.header}>
+            <ThemedText type="title" style={styles.productTitle}>{product.name}</ThemedText>
+            <View style={[styles.categoryBadge, { backgroundColor: colors.tint + '20' }]}>
+              <ThemedText style={[styles.categoryText, { color: colors.tint }]}>{product.category}</ThemedText>
+            </View>
+          </View>
+          
+          {/* Price Section */}
           <View style={styles.priceContainer}>
             {hasDiscount && (
               <ThemedText style={styles.originalPrice}>
@@ -174,15 +300,31 @@ export default function ProductDetailScreen() {
             <ThemedText style={styles.price}>
               {formatCurrency(currentPrice)}
             </ThemedText>
+            
+            {hasDiscount && (
+              <View style={[styles.savingsBadge, { backgroundColor: colors.tint + '20' }]}>
+                <ThemedText style={[styles.savingsText, { color: colors.tint }]}>
+                  Save {formatCurrency(product.price - product.discountedPrice!)}
+                </ThemedText>
+              </View>
+            )}
           </View>
           
-          <View style={styles.quantityContainer}>
-            <ThemedText style={styles.quantityLabel}>Quantity:</ThemedText>
-            <View style={styles.quantityControls}>
+          {/* Divider */}
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
+          
+          {/* Quantity Selector */}
+          <View style={styles.quantitySection}>
+            <ThemedText style={styles.sectionTitle}>Quantity</ThemedText>
+            
+            <View style={styles.quantityContainer}>
               <TouchableOpacity
                 style={[
                   styles.quantityButton,
-                  { borderColor: colors.border },
+                  { 
+                    backgroundColor: colors.background,
+                    borderColor: colors.border 
+                  },
                   quantity <= 1 && styles.disabledButton
                 ]}
                 onPress={decrementQuantity}
@@ -194,11 +336,18 @@ export default function ProductDetailScreen() {
                   color={quantity <= 1 ? colors.disabledText : colors.text}
                 />
               </TouchableOpacity>
-              <ThemedText style={styles.quantityValue}>{quantity}</ThemedText>
+              
+              <View style={[styles.quantityValueContainer, { backgroundColor: colors.background }]}>
+                <ThemedText style={styles.quantityValue}>{quantity}</ThemedText>
+              </View>
+              
               <TouchableOpacity
                 style={[
                   styles.quantityButton,
-                  { borderColor: colors.border },
+                  { 
+                    backgroundColor: colors.background,
+                    borderColor: colors.border 
+                  },
                   quantity >= product.quantity && styles.disabledButton
                 ]}
                 onPress={incrementQuantity}
@@ -210,27 +359,92 @@ export default function ProductDetailScreen() {
                   color={quantity >= product.quantity ? colors.disabledText : colors.text}
                 />
               </TouchableOpacity>
+              
+              <ThemedText style={styles.stockInfo}>
+                {product.quantity > 10
+                  ? 'In Stock'
+                  : product.quantity > 0
+                  ? `Only ${product.quantity} left`
+                  : 'Out of Stock'}
+              </ThemedText>
             </View>
           </View>
           
-          <ThemedText style={styles.stockInfo}>
-            {product.quantity > 0
-              ? `In Stock: ${product.quantity} available`
-              : 'Out of Stock'}
-          </ThemedText>
+          {/* Divider */}
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
           
-          <View style={styles.divider} />
+          {/* Description Section */}
+          <View style={styles.descriptionSection}>
+            <ThemedText style={styles.sectionTitle}>Description</ThemedText>
+            <ThemedText style={styles.description}>{product.description}</ThemedText>
+          </View>
           
-          <ThemedText type="subtitle">Description</ThemedText>
-          <ThemedText style={styles.description}>{product.description}</ThemedText>
+          {/* Product Details */}
+          <View style={styles.detailsSection}>
+            <ThemedText style={styles.sectionTitle}>Product Details</ThemedText>
+            
+            <View style={styles.detailsGrid}>
+              <View style={styles.detailItem}>
+                <Ionicons name="leaf-outline" size={20} color={colors.tint} />
+                <ThemedText style={styles.detailText}>Organic</ThemedText>
+              </View>
+              
+              <View style={styles.detailItem}>
+                <Ionicons name="nutrition-outline" size={20} color={colors.tint} />
+                <ThemedText style={styles.detailText}>Fresh</ThemedText>
+              </View>
+              
+              <View style={styles.detailItem}>
+                <Ionicons name="timer-outline" size={20} color={colors.tint} />
+                <ThemedText style={styles.detailText}>Same Day Delivery</ThemedText>
+              </View>
+              
+              <View style={styles.detailItem}>
+                <Ionicons name="shield-checkmark-outline" size={20} color={colors.tint} />
+                <ThemedText style={styles.detailText}>Quality Assured</ThemedText>
+              </View>
+            </View>
+          </View>
           
-          <Button
-            title="Add to Cart"
-            onPress={handleAddToCart}
-            disabled={product.quantity === 0}
-            fullWidth
-            style={styles.addButton}
-          />
+          {/* Related Products */}
+          {relatedProducts.length > 0 && (
+            <View style={styles.relatedProductsSection}>
+              <ThemedText style={styles.sectionTitle}>You May Also Like</ThemedText>
+              
+              <FlatList
+                data={relatedProducts}
+                renderItem={({ item }) => (
+                  <ProductCard product={item} horizontal />
+                )}
+                keyExtractor={(item) => item.id.toString()}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.relatedProductsList}
+              />
+            </View>
+          )}
+          
+          {/* Add to Cart Button */}
+          <View style={styles.actionButtonsContainer}>
+            <TouchableOpacity 
+              style={[styles.wishlistButton, { borderColor: colors.border }]}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+            >
+              <Ionicons name="heart-outline" size={24} color={colors.text} />
+            </TouchableOpacity>
+            
+            <Button
+              title={isAddingToCart ? "Adding..." : "Add to Cart"}
+              onPress={handleAddToCart}
+              disabled={product.quantity === 0 || isAddingToCart}
+              loading={isAddingToCart}
+              fullWidth={false}
+              style={styles.addButton}
+              icon={isAddingToCart ? undefined : "cart-outline"}
+            />
+          </View>
         </View>
       </ScrollView>
     </ThemedView>
@@ -261,17 +475,38 @@ const styles = StyleSheet.create({
   backButton: {
     minWidth: 120,
   },
+  favoriteButton: {
+    padding: 8,
+  },
+  imageCarouselContainer: {
+    position: 'relative',
+  },
   productImage: {
     width: width,
-    height: width,
+    height: width * 0.8,
+  },
+  paginationContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'absolute',
+    bottom: 16,
+    left: 0,
+    right: 0,
+  },
+  paginationDot: {
+    height: 8,
+    borderRadius: 4,
+    marginHorizontal: 4,
   },
   discountBadge: {
     position: 'absolute',
     top: 16,
     right: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
+    backgroundColor: '#FF3B30',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
   },
   discountText: {
     color: '#FFFFFF',
@@ -279,7 +514,38 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   contentContainer: {
-    padding: 16,
+    padding: 20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    marginTop: -24,
+  },
+  shopInfoContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  shopInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  shopName: {
+    marginLeft: 6,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  ratingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  ratingText: {
+    marginLeft: 4,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  ratingCount: {
+    marginLeft: 2,
+    fontSize: 12,
   },
   header: {
     flexDirection: 'row',
@@ -287,24 +553,31 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: 12,
   },
+  productTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    flex: 1,
+    marginRight: 12,
+  },
   categoryBadge: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: '#E0E0E0',
   },
   categoryText: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   priceContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 16,
+    flexWrap: 'wrap',
   },
   price: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: '700',
+    marginRight: 12,
   },
   originalPrice: {
     fontSize: 18,
@@ -312,51 +585,108 @@ const styles = StyleSheet.create({
     marginRight: 8,
     opacity: 0.7,
   },
-  quantityContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  savingsBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  savingsText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  divider: {
+    height: 1,
+    marginVertical: 16,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
     marginBottom: 12,
   },
-  quantityLabel: {
-    marginRight: 16,
-    fontSize: 16,
+  quantitySection: {
+    marginBottom: 8,
   },
-  quantityControls: {
+  quantityContainer: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   quantityButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 8,
     borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  quantityValueContainer: {
+    width: 60,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 8,
+    borderRadius: 8,
+  },
+  quantityValue: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
   disabledButton: {
     opacity: 0.5,
   },
-  quantityValue: {
-    marginHorizontal: 16,
-    fontSize: 18,
-    fontWeight: '500',
-    minWidth: 24,
-    textAlign: 'center',
-  },
   stockInfo: {
-    marginBottom: 16,
+    marginLeft: 16,
     fontSize: 14,
+    fontWeight: '500',
   },
-  divider: {
-    height: 1,
-    backgroundColor: '#E0E0E0',
-    marginVertical: 16,
+  descriptionSection: {
+    marginBottom: 16,
   },
   description: {
     lineHeight: 22,
+    fontSize: 15,
+  },
+  detailsSection: {
     marginBottom: 24,
   },
-  addButton: {
+  detailsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginHorizontal: -8,
+  },
+  detailItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '50%',
+    paddingHorizontal: 8,
+    marginBottom: 16,
+  },
+  detailText: {
+    marginLeft: 8,
+    fontSize: 14,
+  },
+  relatedProductsSection: {
     marginBottom: 24,
+  },
+  relatedProductsList: {
+    paddingRight: 16,
+  },
+  actionButtonsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  wishlistButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  addButton: {
+    flex: 1,
+    height: 50,
+    borderRadius: 12,
   },
 });

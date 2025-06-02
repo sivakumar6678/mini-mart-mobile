@@ -1,7 +1,8 @@
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
+import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { ActivityIndicator, StyleSheet, Text, TextStyle, TouchableOpacity, ViewStyle } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TextStyle, TouchableOpacity, View, ViewStyle } from 'react-native';
 
 interface ButtonProps {
   title: string;
@@ -12,6 +13,7 @@ interface ButtonProps {
   style?: ViewStyle;
   textStyle?: TextStyle;
   fullWidth?: boolean;
+  icon?: keyof typeof Ionicons.glyphMap;
 }
 
 export const Button: React.FC<ButtonProps> = ({
@@ -23,6 +25,7 @@ export const Button: React.FC<ButtonProps> = ({
   style,
   textStyle,
   fullWidth = false,
+  icon,
 }) => {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
@@ -85,7 +88,17 @@ export const Button: React.FC<ButtonProps> = ({
       {loading ? (
         <ActivityIndicator color={variant === 'outline' ? colors.tint : '#FFFFFF'} />
       ) : (
-        <Text style={[styles.text, getTextStyle(), textStyle]}>{title}</Text>
+        <View style={styles.content}>
+          {icon && (
+            <Ionicons
+              name={icon}
+              size={20}
+              color={variant === 'outline' ? colors.tint : '#FFFFFF'}
+              style={styles.icon}
+            />
+          )}
+          <Text style={[styles.text, getTextStyle(), textStyle]}>{title}</Text>
+        </View>
       )}
     </TouchableOpacity>
   );
@@ -103,6 +116,14 @@ const styles = StyleSheet.create({
   },
   fullWidth: {
     width: '100%',
+  },
+  content: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  icon: {
+    marginRight: 8,
   },
   text: {
     fontSize: 16,

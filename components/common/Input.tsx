@@ -18,6 +18,7 @@ interface InputProps {
   style?: ViewStyle;
   inputStyle?: TextStyle;
   disabled?: boolean;
+  leftIcon?: keyof typeof Ionicons.glyphMap;
 }
 
 export const Input: React.FC<InputProps> = ({
@@ -34,6 +35,7 @@ export const Input: React.FC<InputProps> = ({
   style,
   inputStyle,
   disabled = false,
+  leftIcon,
 }) => {
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const colorScheme = useColorScheme();
@@ -53,6 +55,14 @@ export const Input: React.FC<InputProps> = ({
           backgroundColor: disabled ? colors.disabledBackground : 'transparent'
         }
       ]}>
+        {leftIcon && (
+          <Ionicons
+            name={leftIcon}
+            size={24}
+            color={colors.tabIconDefault}
+            style={styles.leftIcon}
+          />
+        )}
         <TextInput
           style={[
             styles.input,
@@ -119,5 +129,8 @@ const styles = StyleSheet.create({
     color: '#FF3B30',
     fontSize: 14,
     marginTop: 4,
+  },
+  leftIcon: {
+    marginRight: 8,
   },
 });

@@ -3,14 +3,21 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { Address } from '@/services/order.service';
+import { Order } from '@/services/order.service';
 import { formatCurrency } from '@/utils/formatCurrency';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+import { Image } from 'expo-image';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, View } from 'react-native';
+import {
+    ActivityIndicator,
+    ScrollView,
+    StyleSheet,
+    View
+} from 'react-native';
 
-// Mock order data (same as in orders.tsx)
+// Mock orders (same as in orders.tsx)
 const ORDERS = [
   {
     id: 1,
@@ -21,12 +28,14 @@ const ORDERS = [
         quantity: 2,
         price: 99,
         productName: 'Fresh Organic Apples',
+        image: 'https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6',
       },
       {
         productId: 3,
         quantity: 1,
         price: 60,
         productName: 'Organic Milk 1L',
+        image: 'https://images.unsplash.com/photo-1563636619-e9143da7973b',
       },
     ],
     total: 258,
@@ -34,6 +43,9 @@ const ORDERS = [
     addressId: 1,
     createdAt: '2023-06-15T10:30:00Z',
     updatedAt: '2023-06-16T14:20:00Z',
+    paymentMethod: 'Credit Card',
+    deliveryPartner: 'Express Delivery',
+    trackingId: 'EXP12345678',
   },
   {
     id: 2,
@@ -44,12 +56,14 @@ const ORDERS = [
         quantity: 1,
         price: 45,
         productName: 'Whole Wheat Bread',
+        image: 'https://images.unsplash.com/photo-1598373182133-52452f7691ef',
       },
       {
         productId: 4,
         quantity: 3,
         price: 30,
         productName: 'Fresh Tomatoes',
+        image: 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea',
       },
     ],
     total: 135,
@@ -57,6 +71,9 @@ const ORDERS = [
     addressId: 1,
     createdAt: '2023-06-20T14:45:00Z',
     updatedAt: '2023-06-21T09:30:00Z',
+    paymentMethod: 'Cash on Delivery',
+    deliveryPartner: 'Fast Track',
+    trackingId: 'FT87654321',
   },
   {
     id: 3,
@@ -67,6 +84,7 @@ const ORDERS = [
         quantity: 2,
         price: 65,
         productName: 'Organic Bananas',
+        image: 'https://images.unsplash.com/photo-1571771894821-ce9b6c11b08e',
       },
     ],
     total: 130,
@@ -74,6 +92,7 @@ const ORDERS = [
     addressId: 2,
     createdAt: '2023-06-25T09:15:00Z',
     updatedAt: '2023-06-25T10:00:00Z',
+    paymentMethod: 'Digital Wallet',
   },
   {
     id: 4,
@@ -84,12 +103,14 @@ const ORDERS = [
         quantity: 1,
         price: 35,
         productName: 'Fresh Carrots',
+        image: 'https://images.unsplash.com/photo-1598170845058-32b9d6a5da37',
       },
       {
         productId: 1,
         quantity: 1,
         price: 99,
         productName: 'Fresh Organic Apples',
+        image: 'https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6',
       },
     ],
     total: 134,
@@ -97,11 +118,12 @@ const ORDERS = [
     addressId: 1,
     createdAt: '2023-06-28T16:20:00Z',
     updatedAt: '2023-06-28T16:20:00Z',
+    paymentMethod: 'Credit Card',
   },
 ];
 
 // Mock addresses
-const ADDRESSES: Address[] = [
+const ADDRESSES = [
   {
     id: 1,
     street: '123 Main Street, Apartment 4B',
@@ -120,12 +142,26 @@ const ADDRESSES: Address[] = [
   },
 ];
 
-export default function OrderDetailScreen() {
+interface ExtendedOrderItem {
+  productId: number;
+  quantity: number;
+  price: number;
+  productName: string;
+  image: string;
+}
+
+interface ExtendedOrder extends Order {
+  items: ExtendedOrderItem[];
+  paymentMethod: string;
+  deliveryPartner?: string;
+  trackingId?: string;
+}
+
+export default function OrderDetailsScreen() {
   const { id } = useLocalSearchParams();
-  const [order, setOrder] = useState<any | null>(null);
-  const [address, setAddress] = useState<Address | null>(null);
+  const [order, setOrder] = useState<ExtendedOrder | null>(null);
+  const [address, setAddress] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isCancelling, setIsCancelling] = useState(false);
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
@@ -135,7 +171,7 @@ export default function OrderDetailScreen() {
       try {
         // Simulate API call
         setTimeout(() => {
-          const foundOrder = ORDERS.find(o => o.id === Number(id));
+          const foundOrder = ORDERS.find(o => o.id === Number(id)) as ExtendedOrder;
           setOrder(foundOrder || null);
           
           if (foundOrder) {
@@ -154,32 +190,15 @@ export default function OrderDetailScreen() {
     loadOrderDetails();
   }, [id]);
 
-  const handleCancelOrder = () => {
-    Alert.alert(
-      'Cancel Order',
-      'Are you sure you want to cancel this order?',
-      [
-        { text: 'No', style: 'cancel' },
-        { 
-          text: 'Yes', 
-          style: 'destructive',
-          onPress: async () => {
-            setIsCancelling(true);
-            try {
-              // Simulate API call
-              setTimeout(() => {
-                setOrder({ ...order, status: 'cancelled' });
-                setIsCancelling(false);
-              }, 500);
-            } catch (error) {
-              console.error('Error cancelling order:', error);
-              setIsCancelling(false);
-              Alert.alert('Error', 'Failed to cancel order. Please try again.');
-            }
-          }
-        },
-      ]
-    );
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
   const getStatusColor = (status: string) => {
@@ -188,6 +207,8 @@ export default function OrderDetailScreen() {
         return '#F5A623';
       case 'confirmed':
         return '#4A90E2';
+      case 'processing':
+        return '#9B59B6';
       case 'dispatched':
         return '#7ED321';
       case 'delivered':
@@ -199,15 +220,40 @@ export default function OrderDetailScreen() {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'pending':
+        return 'time-outline';
+      case 'confirmed':
+        return 'checkmark-circle-outline';
+      case 'processing':
+        return 'construct-outline';
+      case 'dispatched':
+        return 'bicycle-outline';
+      case 'delivered':
+        return 'bag-check-outline';
+      case 'cancelled':
+        return 'close-circle-outline';
+      default:
+        return 'help-circle-outline';
+    }
+  };
+
+  const handleTrackOrder = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    router.push(`/order/track?id=${order?.id}`);
+  };
+
+  const handleReorder = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    // Implement reorder functionality
+    alert('Reorder functionality to be implemented');
+  };
+
+  const handleCancelOrder = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    // Implement cancel order functionality
+    alert('Cancel order functionality to be implemented');
   };
 
   if (isLoading) {
@@ -229,7 +275,10 @@ export default function OrderDetailScreen() {
         </ThemedText>
         <Button
           title="Go Back"
-          onPress={() => router.back()}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            router.back();
+          }}
           style={styles.backButton}
         />
       </ThemedView>
@@ -242,57 +291,138 @@ export default function OrderDetailScreen() {
       
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Order Status */}
+        <View style={styles.statusContainer}>
+          <View style={[styles.statusCard, { backgroundColor: colors.cardBackground }]}>
+            <View style={styles.statusHeader}>
+              <View style={[styles.statusIconContainer, { backgroundColor: getStatusColor(order.status) + '20' }]}>
+                <Ionicons name={getStatusIcon(order.status) as any} size={24} color={getStatusColor(order.status)} />
+              </View>
+              <View style={styles.statusContent}>
+                <ThemedText style={styles.statusTitle}>
+                  {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                </ThemedText>
+                <ThemedText style={[styles.statusText, { color: getStatusColor(order.status) }]}>
+                  {order.status === 'pending' && 'Your order is pending confirmation'}
+                  {order.status === 'confirmed' && 'Your order has been confirmed'}
+                  {order.status === 'dispatched' && 'Your order is on the way'}
+                  {order.status === 'delivered' && 'Your order has been delivered'}
+                  {order.status === 'cancelled' && 'Your order has been cancelled'}
+                </ThemedText>
+              </View>
+            </View>
+          </View>
+          
+          {order.status === 'dispatched' && (
+            <Button
+              title="Track Order"
+              onPress={handleTrackOrder}
+              icon="navigate-outline"
+              style={styles.trackButton}
+            />
+          )}
+        </View>
+        
+        {/* Order Summary */}
         <View style={styles.section}>
-          <View style={[styles.statusContainer, { backgroundColor: getStatusColor(order.status) + '20' }]}>
-            <Ionicons name="information-circle-outline" size={24} color={getStatusColor(order.status)} />
-            <ThemedText style={[styles.statusText, { color: getStatusColor(order.status) }]}>
-              {order.status === 'pending' && 'Your order is pending confirmation'}
-              {order.status === 'confirmed' && 'Your order has been confirmed'}
-              {order.status === 'dispatched' && 'Your order is on the way'}
-              {order.status === 'delivered' && 'Your order has been delivered'}
-              {order.status === 'cancelled' && 'Your order has been cancelled'}
-            </ThemedText>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="receipt-outline" size={20} color={colors.tint} />
+            <ThemedText type="subtitle" style={styles.sectionTitle}>Order Summary</ThemedText>
+          </View>
+          
+          <View style={[styles.summaryContainer, { backgroundColor: colors.cardBackground }]}>
+            <View style={styles.summaryRow}>
+              <ThemedText>Subtotal</ThemedText>
+              <ThemedText>{formatCurrency(order.total - 40)}</ThemedText>
+            </View>
+            
+            <View style={styles.summaryRow}>
+              <ThemedText>Delivery Fee</ThemedText>
+              <ThemedText>{formatCurrency(40)}</ThemedText>
+            </View>
+            
+            <View style={[styles.summaryRow, styles.totalRow, { borderTopColor: colors.border }]}>
+              <ThemedText type="defaultSemiBold">Total</ThemedText>
+              <ThemedText type="subtitle" style={styles.totalAmount}>{formatCurrency(order.total)}</ThemedText>
+            </View>
           </View>
         </View>
         
         {/* Order Info */}
         <View style={styles.section}>
-          <ThemedText type="subtitle">Order Information</ThemedText>
-          <View style={styles.infoContainer}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="information-circle-outline" size={20} color={colors.tint} />
+            <ThemedText type="subtitle" style={styles.sectionTitle}>Order Information</ThemedText>
+          </View>
+          
+          <View style={[styles.infoContainer, { backgroundColor: colors.cardBackground }]}>
             <View style={styles.infoRow}>
               <ThemedText style={styles.infoLabel}>Order ID</ThemedText>
               <ThemedText style={styles.infoValue}>#{order.id}</ThemedText>
             </View>
+            <View style={[styles.divider, { backgroundColor: colors.border }]} />
+            
             <View style={styles.infoRow}>
               <ThemedText style={styles.infoLabel}>Order Date</ThemedText>
-              <ThemedText style={styles.infoValue}>{formatDate(order.createdAt)}</ThemedText>
+              <ThemedText style={styles.infoValue}>{formatDate(order.createdAt!)}</ThemedText>
             </View>
+            <View style={[styles.divider, { backgroundColor: colors.border }]} />
+            
             <View style={styles.infoRow}>
-              <ThemedText style={styles.infoLabel}>Status</ThemedText>
-              <View style={[styles.statusBadge, { backgroundColor: getStatusColor(order.status) + '20' }]}>
-                <ThemedText style={[styles.statusBadgeText, { color: getStatusColor(order.status) }]}>
-                  {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
-                </ThemedText>
-              </View>
+              <ThemedText style={styles.infoLabel}>Payment Method</ThemedText>
+              <ThemedText style={styles.infoValue}>{order.paymentMethod}</ThemedText>
             </View>
+            <View style={[styles.divider, { backgroundColor: colors.border }]} />
+            
             {order.status !== 'pending' && (
-              <View style={styles.infoRow}>
-                <ThemedText style={styles.infoLabel}>Last Updated</ThemedText>
-                <ThemedText style={styles.infoValue}>{formatDate(order.updatedAt)}</ThemedText>
-              </View>
+              <>
+                <View style={styles.infoRow}>
+                  <ThemedText style={styles.infoLabel}>Last Updated</ThemedText>
+                  <ThemedText style={styles.infoValue}>{formatDate(order.updatedAt!)}</ThemedText>
+                </View>
+                <View style={[styles.divider, { backgroundColor: colors.border }]} />
+              </>
+            )}
+            
+            {(order.status === 'dispatched' || order.status === 'delivered') && (
+              <>
+                <View style={styles.infoRow}>
+                  <ThemedText style={styles.infoLabel}>Delivery Partner</ThemedText>
+                  <ThemedText style={styles.infoValue}>{order.deliveryPartner}</ThemedText>
+                </View>
+                <View style={[styles.divider, { backgroundColor: colors.border }]} />
+                
+                <View style={styles.infoRow}>
+                  <ThemedText style={styles.infoLabel}>Tracking ID</ThemedText>
+                  <ThemedText style={styles.infoValue}>{order.trackingId}</ThemedText>
+                </View>
+              </>
             )}
           </View>
         </View>
         
         {/* Order Items */}
         <View style={styles.section}>
-          <ThemedText type="subtitle">Order Items</ThemedText>
-          <View style={styles.itemsContainer}>
-            {order.items.map((item: any, index: number) => (
-              <View key={index} style={styles.orderItem}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="cart-outline" size={20} color={colors.tint} />
+            <ThemedText type="subtitle" style={styles.sectionTitle}>Order Items</ThemedText>
+          </View>
+          
+          <View style={[styles.itemsContainer, { backgroundColor: colors.cardBackground }]}>
+            {order.items.map((item: ExtendedOrderItem, index: number) => (
+              <View key={index} style={[styles.orderItem, index < order.items.length - 1 && styles.itemBorder]}>
+                {item.image && (
+                  <Image
+                    source={{ uri: item.image }}
+                    style={styles.itemImage}
+                    contentFit="cover"
+                  />
+                )}
                 <View style={styles.itemInfo}>
                   <ThemedText style={styles.itemName}>{item.productName}</ThemedText>
-                  <ThemedText style={styles.itemPrice}>{formatCurrency(item.price)} x {item.quantity}</ThemedText>
+                  <View style={styles.itemDetails}>
+                    <ThemedText style={styles.itemPrice}>{formatCurrency(item.price)}</ThemedText>
+                    <ThemedText style={styles.itemQuantity}>× {item.quantity}</ThemedText>
+                  </View>
                 </View>
                 <ThemedText style={styles.itemTotal}>{formatCurrency(item.price * item.quantity)}</ThemedText>
               </View>
@@ -303,8 +433,12 @@ export default function OrderDetailScreen() {
         {/* Delivery Address */}
         {address && (
           <View style={styles.section}>
-            <ThemedText type="subtitle">Delivery Address</ThemedText>
-            <View style={styles.addressContainer}>
+            <View style={styles.sectionHeader}>
+              <Ionicons name="location-outline" size={20} color={colors.tint} />
+              <ThemedText type="subtitle" style={styles.sectionTitle}>Delivery Address</ThemedText>
+            </View>
+            
+            <View style={[styles.addressContainer, { backgroundColor: colors.cardBackground }]}>
               <ThemedText style={styles.addressText}>{address.street}</ThemedText>
               <ThemedText style={styles.addressText}>
                 {address.city}, {address.state} {address.zipCode}
@@ -313,37 +447,38 @@ export default function OrderDetailScreen() {
           </View>
         )}
         
-        {/* Order Summary */}
-        <View style={styles.section}>
-          <ThemedText type="subtitle">Order Summary</ThemedText>
-          <View style={styles.summaryContainer}>
-            <View style={styles.summaryRow}>
-              <ThemedText>Subtotal</ThemedText>
-              <ThemedText>{formatCurrency(order.total - 40)}</ThemedText>
-            </View>
-            <View style={styles.summaryRow}>
-              <ThemedText>Delivery Fee</ThemedText>
-              <ThemedText>{formatCurrency(40)}</ThemedText>
-            </View>
-            <View style={[styles.summaryRow, styles.totalRow]}>
-              <ThemedText type="defaultSemiBold">Total</ThemedText>
-              <ThemedText type="defaultSemiBold">{formatCurrency(order.total)}</ThemedText>
-            </View>
-          </View>
-        </View>
-        
-        {/* Cancel Button (only for pending or confirmed orders) */}
-        {(order.status === 'pending' || order.status === 'confirmed') && (
+        {/* Action Buttons */}
+        <View style={styles.actionButtonsContainer}>
+          {order.status === 'delivered' && (
+            <Button
+              title="Reorder"
+              onPress={handleReorder}
+              icon="refresh-outline"
+              style={styles.actionButton}
+            />
+          )}
+          
+          {order.status === 'pending' && (
+            <Button
+              title="Cancel Order"
+              onPress={handleCancelOrder}
+              variant="outline"
+              icon="close-circle-outline"
+              style={styles.actionButton}
+            />
+          )}
+          
           <Button
-            title={isCancelling ? 'Cancelling...' : 'Cancel Order'}
-            onPress={handleCancelOrder}
-            variant="danger"
-            loading={isCancelling}
-            disabled={isCancelling}
-            fullWidth
-            style={styles.cancelButton}
+            title="Need Help?"
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.push('/support/chat');
+            }}
+            variant="outline"
+            icon="help-circle-outline"
+            style={styles.actionButton}
           />
-        )}
+        </View>
       </ScrollView>
     </ThemedView>
   );
@@ -375,91 +510,62 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 24,
   },
-  statusContainer: {
+  sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginLeft: 8,
+  },
+  statusContainer: {
+    marginBottom: 24,
+  },
+  statusCard: {
+    borderRadius: 16,
     padding: 16,
-    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  statusHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  statusContent: {
+    flex: 1,
+  },
+  statusTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 4,
   },
   statusText: {
-    marginLeft: 12,
-    fontSize: 16,
-    fontWeight: '500',
-    flex: 1,
-  },
-  infoContainer: {
-    marginTop: 12,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  infoLabel: {
-    opacity: 0.7,
-  },
-  infoValue: {
-    fontWeight: '500',
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  statusBadgeText: {
     fontSize: 14,
-    fontWeight: '500',
   },
-  itemsContainer: {
-    marginTop: 12,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  orderItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  itemInfo: {
-    flex: 1,
-  },
-  itemName: {
-    fontSize: 16,
-    fontWeight: '500',
-    marginBottom: 4,
-  },
-  itemPrice: {
-    opacity: 0.7,
-  },
-  itemTotal: {
-    fontWeight: '600',
-  },
-  addressContainer: {
-    marginTop: 12,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-  },
-  addressText: {
-    marginBottom: 4,
+  trackButton: {
+    marginTop: 16,
   },
   summaryContainer: {
-    marginTop: 12,
     padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
   },
   summaryRow: {
     flexDirection: 'row',
@@ -470,10 +576,100 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
     marginBottom: 0,
   },
-  cancelButton: {
+  totalAmount: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  infoContainer: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: 16,
+  },
+  infoLabel: {
+    opacity: 0.7,
+  },
+  infoValue: {
+    fontWeight: '600',
+  },
+  divider: {
+    height: 1,
+  },
+  itemsContainer: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  orderItem: {
+    flexDirection: 'row',
+    padding: 16,
+  },
+  itemBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  itemImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 8,
+    marginRight: 12,
+  },
+  itemInfo: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  itemName: {
+    fontSize: 16,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  itemDetails: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  itemPrice: {
+    fontSize: 14,
+  },
+  itemQuantity: {
+    fontSize: 14,
+    marginLeft: 8,
+    opacity: 0.7,
+  },
+  itemTotal: {
+    alignSelf: 'center',
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  addressContainer: {
+    padding: 16,
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  addressText: {
+    marginBottom: 4,
+  },
+  actionButtonsContainer: {
     marginBottom: 24,
+  },
+  actionButton: {
+    marginBottom: 12,
   },
 });
