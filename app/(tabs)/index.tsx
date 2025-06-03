@@ -1,4 +1,3 @@
-import ParallaxScrollView from '@/components/ParallaxScrollView';
 import { ProductCard } from '@/components/product/ProductCard';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
@@ -6,24 +5,25 @@ import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
 import { useCity } from '@/context/CityContext';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { Product } from '@/services/product.service';
+import ProductService, { Product } from '@/services/product.service';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Animated,
-  Dimensions,
-  FlatList,
-  ImageBackground,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    Animated,
+    Dimensions,
+    FlatList,
+    ImageBackground,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 
 // Mock data for featured products
@@ -113,32 +113,64 @@ const BANNER_WIDTH = width - 48;
 export default function HomeScreen() {
   const { selectedCity } = useCity();
   const { user } = useAuth();
-  const [isLoading, setIsLoading] = useState(false);
-  const [featuredProducts, setFeaturedProducts] = useState<Product[]>(FEATURED_PRODUCTS);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [featuredProducts, setFeaturedProducts] = useState<Product[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const scrollX = useRef(new Animated.Value(0)).current;
   const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
 
-  // In a real app, we would fetch products from the API based on the selected city
-  useEffect(() => {
-    const loadProducts = async () => {
+  // Load products from API based on selected city
+  const loadProducts = useCallback(async (showRefreshing = false) => {
+    if (showRefreshing) {
+      setIsRefreshing(true);
+    } else {
       setIsLoading(true);
-      try {
-        // Simulate API call
-        setTimeout(() => {
-          setFeaturedProducts(FEATURED_PRODUCTS);
-          setIsLoading(false);
-        }, 500);
-      } catch (error) {
-        console.error('Error loading products:', error);
-        setIsLoading(false);
-      }
-    };
+    }
+    setError(null);
 
-    loadProducts();
+    try {
+      let products: Product[] = [];
+      
+      if (selectedCity && selectedCity !== 'All Cities') {
+        // Get products by city
+        products = await ProductService.getProductsByCity(selectedCity);
+      } else {
+        // Get all products with limit for featured section
+        products = await ProductService.getAllProducts({ limit: 8 });
+      }
+      
+      setFeaturedProducts(products);
+    } catch (error: any) {
+      console.error('Error loading products:', error);
+      setError(error.response?.data?.message || 'Failed to load products');
+      
+      // Show error alert
+      Alert.alert(
+        'Error',
+        'Failed to load products. Please check your connection and try again.',
+        [
+          { text: 'Retry', onPress: () => loadProducts() },
+          { text: 'Cancel', style: 'cancel' }
+        ]
+      );
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
   }, [selectedCity]);
+
+  useEffect(() => {
+    loadProducts();
+  }, [loadProducts]);
+
+  const handleRefresh = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    loadProducts(true);
+  }, [loadProducts]);
 
   const navigateToCategory = (category: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -205,16 +237,30 @@ export default function HomeScreen() {
     );
   };
 
+  // Show loading screen on initial load
+  if (isLoading && featuredProducts.length === 0) {
+    return (
+      <ThemedView style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={colors.tint} />
+        <ThemedText style={styles.loadingText}>Loading products...</ThemedText>
+      </ThemedView>
+    );
+  }
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.headerImage}
-        />
-      }>
-      <ThemedView style={styles.container}>
+    <ThemedView style={styles.container}>
+      <ScrollView
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            colors={[colors.tint]}
+            tintColor={colors.tint}
+          />
+        }
+      >
         {/* Welcome section */}
         <ThemedView style={styles.welcomeSection}>
           <View style={styles.welcomeHeader}>
@@ -333,8 +379,14 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
 
-          {isLoading ? (
-            <ActivityIndicator size="large" color={colors.tint} style={styles.loader} />
+          {featuredProducts.length === 0 && !isLoading ? (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="storefront-outline" size={80} color={colors.tabIconDefault} />
+              <ThemedText style={styles.emptyText}>No products available</ThemedText>
+              <ThemedText style={styles.emptySubtext}>
+                {selectedCity ? `No products found in ${selectedCity}` : 'Try selecting a different city'}
+              </ThemedText>
+            </View>
           ) : (
             <FlatList
               data={featuredProducts}
@@ -346,8 +398,8 @@ export default function HomeScreen() {
             />
           )}
         </ThemedView>
-      </ThemedView>
-    </ParallaxScrollView>
+      </ScrollView>
+    </ThemedView>
   );
 }
 
@@ -533,5 +585,36 @@ const styles = StyleSheet.create({
   },
   loader: {
     marginVertical: 20,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    opacity: 0.7,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  emptySubtext: {
+    fontSize: 14,
+    opacity: 0.7,
+    marginTop: 8,
+    textAlign: 'center',
   },
 });

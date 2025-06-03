@@ -4,24 +4,20 @@ import { ThemedView } from '@/components/ThemedView';
 import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { Order } from '@/services/order.service';
-// Make sure to update the OrderItem type in order.service.ts to include 'image?: string'
+import OrderService, { Order } from '@/services/order.service';
 import { formatCurrency } from '@/utils/formatCurrency';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Stack, router } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-
+  Alert,
   FlatList,
   RefreshControl,
-
   StyleSheet,
-
   Text,
   TouchableOpacity,
-
   View
 } from 'react-native';
 // Make sure OrderItem type includes 'image' property in order.service.ts
@@ -143,50 +139,56 @@ export default function OrdersScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
+  const [error, setError] = useState<string | null>(null);
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
-  useEffect(() => {
-    loadOrders();
-  }, [user]);
-
-  useEffect(() => {
-    filterOrders(activeFilter);
-  }, [orders, activeFilter]);
-
-  const loadOrders = async () => {
+  const loadOrders = useCallback(async (showRefreshing = false) => {
     if (!user) {
       setIsLoading(false);
       return;
     }
     
-    setIsLoading(true);
-    try {
-      // Simulate API call
-      setTimeout(() => {
-        setOrders(ORDERS);
-        setIsLoading(false);
-      }, 500);
-    } catch (error) {
-      console.error('Error loading orders:', error);
-      setIsLoading(false);
+    if (showRefreshing) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
     }
-  };
+    setError(null);
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
     try {
-      // Simulate API call
-      setTimeout(() => {
-        setOrders(ORDERS);
-        setIsRefreshing(false);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }, 1000);
-    } catch (error) {
-      console.error('Error refreshing orders:', error);
+      const userOrders = await OrderService.getUserOrders();
+      setOrders(userOrders);
+    } catch (error: any) {
+      console.error('Error loading orders:', error);
+      setError(error.response?.data?.message || 'Failed to load orders');
+      
+      Alert.alert(
+        'Error',
+        'Failed to load orders. Please check your connection and try again.',
+        [
+          { text: 'Retry', onPress: () => loadOrders() },
+          { text: 'Cancel', style: 'cancel' }
+        ]
+      );
+    } finally {
+      setIsLoading(false);
       setIsRefreshing(false);
     }
-  };
+  }, [user]);
+
+  useEffect(() => {
+    loadOrders();
+  }, [loadOrders]);
+
+  useEffect(() => {
+    filterOrders(activeFilter);
+  }, [orders, activeFilter]);
+
+  const handleRefresh = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    loadOrders(true);
+  }, [loadOrders]);
 
   const filterOrders = (filterValue: string) => {
     if (filterValue === 'all') {

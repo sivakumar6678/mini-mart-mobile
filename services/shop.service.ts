@@ -1,51 +1,30 @@
+import { Shop } from '../types';
 import api from './api';
 
-export interface Shop {
-  id: number;
-  name: string;
-  description: string;
-  address: string;
-  city: string;
-  phone: string;
-  email: string;
-  image: string;
-  userId: number;
-}
-
-const ShopService = {
-  getAllShops: async (): Promise<Shop[]> => {
+class ShopService {
+  async getAllShops(): Promise<Shop[]> {
     const response = await api.get('/shops');
     return response.data;
-  },
-  
-  getShopById: async (id: number): Promise<Shop> => {
+  }
+
+  async getShopById(id: string): Promise<Shop> {
     const response = await api.get(`/shops/${id}`);
     return response.data;
-  },
-  
-  getShopsByCity: async (city: string): Promise<Shop[]> => {
-    const response = await api.get(`/shops/city/${city}`);
-    return response.data;
-  },
-  
-  createShop: async (shopData: Omit<Shop, 'id'>): Promise<Shop> => {
-    const response = await api.post('/shops', shopData);
-    return response.data;
-  },
-  
-  updateShop: async (id: number, shopData: Partial<Shop>): Promise<Shop> => {
-    const response = await api.put(`/shops/${id}`, shopData);
-    return response.data;
-  },
-  
-  deleteShop: async (id: number): Promise<void> => {
-    await api.delete(`/shops/${id}`);
-  },
-  
-  getShopsByUser: async (userId: number): Promise<Shop[]> => {
-    const response = await api.get(`/shops/user/${userId}`);
+  }
+
+  async createShop(shop: Omit<Shop, 'id' | 'createdAt' | 'updatedAt'>): Promise<Shop> {
+    const response = await api.post('/shops', shop);
     return response.data;
   }
-};
 
-export default ShopService;
+  async updateShop(id: string, shop: Partial<Shop>): Promise<Shop> {
+    const response = await api.put(`/shops/${id}`, shop);
+    return response.data;
+  }
+
+  async deleteShop(id: string): Promise<void> {
+    await api.delete(`/shops/${id}`);
+  }
+}
+
+export default new ShopService();

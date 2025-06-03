@@ -1,64 +1,153 @@
-import api from './api';
+import { Order, OrderItem } from '../types';
 
-export interface OrderItem {
-  id?: number;
-  productId: number;
-  quantity: number;
-  price: number;
-  productName: string;
-}
+// TODO: Replace with actual API endpoints
+const API_URL = 'https://api.minimart.com';
 
-export interface Address {
-  id?: number;
-  street: string;
-  city: string;
-  state: string;
-  zipCode: string;
-  isDefault: boolean;
-}
+const orderService = {
+  async createOrder(orderData: {
+    items: OrderItem[];
+    shippingAddressId: string;
+    paymentMethodId: string;
+  }): Promise<Order> {
+    try {
+      const response = await fetch(`${API_URL}/orders`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(orderData),
+      });
 
-export interface Order {
-  id?: number;
-  userId: number;
-  items: OrderItem[];
-  total: number;
-  status: 'pending' | 'confirmed' | 'dispatched' | 'delivered' | 'cancelled';
-  addressId: number;
-  address?: Address;
-  createdAt?: string;
-  updatedAt?: string;
-}
+      if (!response.ok) {
+        throw new Error('Failed to create order');
+      }
 
-const OrderService = {
-  createOrder: async (orderData: Omit<Order, 'id' | 'createdAt' | 'updatedAt'>): Promise<Order> => {
-    const response = await api.post('/orders', orderData);
-    return response.data;
+      return await response.json();
+    } catch (error) {
+      console.error('Error creating order:', error);
+      throw error;
+    }
   },
-  
-  getOrderById: async (id: number): Promise<Order> => {
-    const response = await api.get(`/orders/${id}`);
-    return response.data;
+
+  async getOrders(params?: {
+    status?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<{ orders: Order[]; total: number }> {
+    try {
+      const queryParams = new URLSearchParams();
+      if (params?.status) queryParams.append('status', params.status);
+      if (params?.page) queryParams.append('page', params.page.toString());
+      if (params?.limit) queryParams.append('limit', params.limit.toString());
+
+      const response = await fetch(`${API_URL}/orders?${queryParams.toString()}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch orders');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      throw error;
+    }
   },
-  
-  getUserOrders: async (): Promise<Order[]> => {
-    const response = await api.get('/orders/user');
-    return response.data;
+
+  async getOrderById(id: string): Promise<Order> {
+    try {
+      const response = await fetch(`${API_URL}/orders/${id}`);
+      if (!response.ok) {
+        throw new Error('Order not found');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching order:', error);
+      throw error;
+    }
   },
-  
-  getShopOrders: async (shopId: number): Promise<Order[]> => {
-    const response = await api.get(`/orders/shop/${shopId}`);
-    return response.data;
+
+  async cancelOrder(id: string): Promise<Order> {
+    try {
+      const response = await fetch(`${API_URL}/orders/${id}/cancel`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to cancel order');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error canceling order:', error);
+      throw error;
+    }
   },
-  
-  updateOrderStatus: async (id: number, status: Order['status']): Promise<Order> => {
-    const response = await api.put(`/orders/${id}/status`, { status });
-    return response.data;
+
+  async trackOrder(id: string): Promise<{
+    status: string;
+    trackingNumber?: string;
+    estimatedDelivery?: string;
+    currentLocation?: string;
+    history: {
+      status: string;
+      timestamp: string;
+      location?: string;
+    }[];
+  }> {
+    try {
+      const response = await fetch(`${API_URL}/orders/${id}/track`);
+      if (!response.ok) {
+        throw new Error('Failed to track order');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error tracking order:', error);
+      throw error;
+    }
   },
-  
-  cancelOrder: async (id: number): Promise<Order> => {
-    const response = await api.put(`/orders/${id}/cancel`);
-    return response.data;
-  }
+
+  async getOrderAnalytics(): Promise<{
+    totalOrders: number;
+    totalRevenue: number;
+    averageOrderValue: number;
+    ordersByStatus: { [key: string]: number };
+  }> {
+    try {
+      const response = await fetch(`${API_URL}/orders/analytics`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch order analytics');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching order analytics:', error);
+      throw error;
+    }
+  },
+
+  async getOrderHistory(userId: string, params?: {
+    page?: number;
+    limit?: number;
+  }): Promise<{ orders: Order[]; total: number }> {
+    try {
+      const queryParams = new URLSearchParams();
+      if (params?.page) queryParams.append('page', params.page.toString());
+      if (params?.limit) queryParams.append('limit', params.limit.toString());
+
+      const response = await fetch(
+        `${API_URL}/users/${userId}/orders?${queryParams.toString()}`
+      );
+      if (!response.ok) {
+        throw new Error('Failed to fetch order history');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching order history:', error);
+      throw error;
+    }
+  },
 };
 
-export default OrderService;
+export default orderService;

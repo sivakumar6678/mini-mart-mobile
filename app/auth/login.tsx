@@ -1,201 +1,228 @@
-import { Button } from '@/components/common/Button';
-import { Input } from '@/components/common/Input';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
-import { Colors } from '@/constants/Colors';
-import { useAuth } from '@/context/AuthContext';
-import { useColorScheme } from '@/hooks/useColorScheme';
-import { loginSchema } from '@/utils/validation';
 import { Ionicons } from '@expo/vector-icons';
-import { yupResolver } from '@hookform/resolvers/yup';
-import * as Haptics from 'expo-haptics';
-import { Image } from 'expo-image';
-import { Link, Stack } from 'expo-router';
-import React, { useState } from 'react';
-import { Controller, useForm } from 'react-hook-form';
+import { Link, useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
 import {
-  Animated,
-  Dimensions,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
-
-interface LoginFormData {
-  email: string;
-  password: string;
-}
-
-const { width } = Dimensions.get('window');
+import { ThemedButton } from '../../components/ThemedButton';
+import { ThemedText } from '../../components/ThemedText';
+import { ThemedView } from '../../components/ThemedView';
+import { useAuth } from '../../context/AuthContext';
+import { useThemeColor } from '../../hooks/useThemeColor';
+import authService from '../../services/auth.service';
 
 export default function LoginScreen() {
-  const { login } = useAuth();
-  const [error, setError] = useState<string | null>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme ?? 'light'];
-  const [shakeAnimation] = useState(new Animated.Value(0));
+  const router = useRouter();
+  const {
+    login,
+    loginWithGoogle,
+    loginWithFacebook,
+    loginWithApple,
+    isBiometricAvailable,
+    authenticateWithBiometric,
+    error,
+    clearError,
+  } = useAuth();
 
-  const { control, handleSubmit, formState: { errors } } = useForm<LoginFormData>({
-    resolver: yupResolver(loginSchema),
-    defaultValues: {
-      email: '',
-      password: '',
-    },
-  });
+  const backgroundColor = useThemeColor({}, 'background');
+  const textColor = useThemeColor({}, 'text');
+  const borderColor = useThemeColor({}, 'border');
 
-  const startShakeAnimation = () => {
-    Animated.sequence([
-      Animated.timing(shakeAnimation, { toValue: 10, duration: 50, useNativeDriver: true }),
-      Animated.timing(shakeAnimation, { toValue: -10, duration: 50, useNativeDriver: true }),
-      Animated.timing(shakeAnimation, { toValue: 10, duration: 50, useNativeDriver: true }),
-      Animated.timing(shakeAnimation, { toValue: 0, duration: 50, useNativeDriver: true })
-    ]).start();
+  useEffect(() => {
+    if (error) {
+      Alert.alert('Error', error);
+      clearError();
+    }
+  }, [error]);
+
+  const handleLogin = async () => {
+    if (!email || !password) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      await login(email, password);
+      router.replace('/');
+    } catch (error) {
+      console.error('Login error:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const onSubmit = async (data: LoginFormData) => {
-    setError(null);
-    setIsLoading(true);
-    
+  const handleBiometricLogin = async () => {
     try {
-      await login(data.email, data.password);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (err: any) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      startShakeAnimation();
-      setError(err.response?.data?.message || 'Failed to login. Please check your credentials.');
+      setIsLoading(true);
+      const success = await authenticateWithBiometric();
+      if (success) {
+        // If biometric auth succeeds, we'll use the stored credentials
+        const authData = await authService.getStoredAuthData();
+        if (authData) {
+          await login(authData.user.email, ''); // Password not needed for biometric
+          router.replace('/');
+        }
+      }
+    } catch (error) {
+      console.error('Biometric login error:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSocialLogin = async (provider: 'google' | 'facebook' | 'apple') => {
+    try {
+      setIsLoading(true);
+      switch (provider) {
+        case 'google':
+          await loginWithGoogle();
+          break;
+        case 'facebook':
+          await loginWithFacebook();
+          break;
+        case 'apple':
+          await loginWithApple();
+          break;
+      }
+    } catch (error) {
+      console.error(`${provider} login error:`, error);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ThemedView style={styles.container}>
-        <Stack.Screen options={{ headerShown: false }} />
-        
+    <ThemedView style={styles.container}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.keyboardAvoidingView}
+      >
         <ScrollView
           contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.logoContainer}>
-            <Image
-              source={require('@/assets/images/react-logo.png')}
-              style={styles.logo}
-              contentFit="contain"
-            />
-            <ThemedText type="title" style={styles.appTitle}>Mini Mart</ThemedText>
-            <ThemedText style={styles.tagline}>Your one-stop shop for daily needs</ThemedText>
+          <View style={styles.header}>
+            <ThemedText style={styles.title}>Welcome Back</ThemedText>
+            <ThemedText style={styles.subtitle}>Sign in to continue</ThemedText>
           </View>
-          
-          <Animated.View 
-            style={[
-              styles.formContainer,
-              { transform: [{ translateX: shakeAnimation }] }
-            ]}
-          >
-            <ThemedText type="subtitle" style={styles.formTitle}>Welcome Back</ThemedText>
-            
-            {error && (
-              <View style={styles.errorContainer}>
-                <Ionicons name="alert-circle" size={20} color="#FF3B30" />
-                <Text style={styles.errorText}>{error}</Text>
-              </View>
-            )}
-            
-            <Controller
-              control={control}
-              name="email"
-              render={({ field: { onChange, value } }) => (
-                <Input
-                  label="Email"
-                  placeholder="Enter your email"
-                  value={value}
-                  onChangeText={onChange}
-                  keyboardType="email-address"
-                  error={errors.email?.message}
-                  style={styles.inputContainer}
+
+          <View style={styles.form}>
+            <View style={[styles.inputContainer, { borderColor }]}>
+              <Ionicons name="mail-outline" size={20} color={textColor} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.input, { color: textColor }]}
+                placeholder="Email"
+                placeholderTextColor={textColor + '80'}
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoComplete="email"
+              />
+            </View>
+
+            <View style={[styles.inputContainer, { borderColor }]}>
+              <Ionicons name="lock-closed-outline" size={20} color={textColor} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.input, { color: textColor }]}
+                placeholder="Password"
+                placeholderTextColor={textColor + '80'}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoComplete="password"
+              />
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                style={styles.eyeIcon}
+              >
+                <Ionicons
+                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                  size={20}
+                  color={textColor}
                 />
-              )}
-            />
-            
-            <Controller
-              control={control}
-              name="password"
-              render={({ field: { onChange, value } }) => (
-                <Input
-                  label="Password"
-                  placeholder="Enter your password"
-                  value={value}
-                  onChangeText={onChange}
-                  secureTextEntry
-                  error={errors.password?.message}
-                  style={styles.inputContainer}
-                />
-              )}
-            />
-            
-            <TouchableOpacity style={styles.forgotPasswordContainer}>
-              <Text style={[styles.forgotPasswordText, { color: colors.tint }]}>
-                Forgot Password?
-              </Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              onPress={() => router.push('/auth/forgot-password' as any)}
+              style={styles.forgotPassword}
+            >
+              <ThemedText style={styles.forgotPasswordText}>Forgot Password?</ThemedText>
             </TouchableOpacity>
-            
-            <Button
-              title="Login"
-              onPress={handleSubmit(onSubmit)}
-              loading={isLoading}
-              fullWidth
+
+            <ThemedButton
+              onPress={handleLogin}
               style={styles.loginButton}
+              disabled={isLoading}
+              title={isLoading ? '' : 'Sign In'}
+              loading={isLoading}
             />
-            
-            <View style={styles.dividerContainer}>
-              <View style={[styles.divider, { backgroundColor: colors.border }]} />
-              <ThemedText style={styles.dividerText}>OR</ThemedText>
-              <View style={[styles.divider, { backgroundColor: colors.border }]} />
-            </View>
-            
-            <View style={styles.socialButtonsContainer}>
-              <TouchableOpacity 
-                style={[styles.socialButton, { backgroundColor: colors.cardBackground }]}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }}
+
+            {isBiometricAvailable && (
+              <TouchableOpacity
+                onPress={handleBiometricLogin}
+                style={[styles.biometricButton, { borderColor }]}
               >
-                <Ionicons name="logo-google" size={20} color="#DB4437" />
-                <Text style={[styles.socialButtonText, { color: colors.text }]}>Google</Text>
+                <Ionicons name="finger-print" size={24} color={textColor} />
+                <ThemedText style={styles.biometricButtonText}>Sign in with Biometrics</ThemedText>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[styles.socialButton, { backgroundColor: colors.cardBackground }]}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }}
+            )}
+
+            <View style={styles.divider}>
+              <View style={[styles.dividerLine, { backgroundColor: borderColor }]} />
+              <ThemedText style={styles.dividerText}>or continue with</ThemedText>
+              <View style={[styles.dividerLine, { backgroundColor: borderColor }]} />
+            </View>
+
+            <View style={styles.socialButtons}>
+              <TouchableOpacity
+                onPress={() => handleSocialLogin('google')}
+                style={[styles.socialButton, { borderColor }]}
               >
-                <Ionicons name="logo-apple" size={20} color={colorScheme === 'dark' ? '#FFFFFF' : '#000000'} />
-                <Text style={[styles.socialButtonText, { color: colors.text }]}>Apple</Text>
+                <Ionicons name="logo-google" size={24} color={textColor} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => handleSocialLogin('facebook')}
+                style={[styles.socialButton, { borderColor }]}
+              >
+                <Ionicons name="logo-facebook" size={24} color={textColor} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => handleSocialLogin('apple')}
+                style={[styles.socialButton, { borderColor }]}
+              >
+                <Ionicons name="logo-apple" size={24} color={textColor} />
               </TouchableOpacity>
             </View>
-            
-            <View style={styles.registerContainer}>
-              <ThemedText>Don't have an account? </ThemedText>
-              <Link href="/auth/register" asChild>
-                <TouchableOpacity onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}>
-                  <Text style={[styles.registerLink, { color: colors.tint }]}>Register</Text>
-                </TouchableOpacity>
-              </Link>
-            </View>
-          </Animated.View>
+          </View>
+
+          <View style={styles.footer}>
+            <ThemedText style={styles.footerText}>Don't have an account? </ThemedText>
+            <Link href="/auth/register" asChild>
+              <TouchableOpacity>
+                <ThemedText style={styles.signUpText}>Sign Up</ThemedText>
+              </TouchableOpacity>
+            </Link>
+          </View>
         </ScrollView>
-      </ThemedView>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </ThemedView>
   );
 }
 
@@ -203,112 +230,113 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  keyboardAvoidingView: {
+    flex: 1,
+  },
   scrollContent: {
     flexGrow: 1,
-    padding: 24,
+    padding: 20,
   },
-  logoContainer: {
-    alignItems: 'center',
+  header: {
     marginTop: 60,
     marginBottom: 40,
   },
-  logo: {
-    width: 100,
-    height: 100,
-    marginBottom: 16,
-  },
-  appTitle: {
-    fontSize: 28,
-    fontWeight: '700',
+  title: {
+    fontSize: 32,
+    fontWeight: 'bold',
     marginBottom: 8,
   },
-  tagline: {
+  subtitle: {
     fontSize: 16,
     opacity: 0.7,
-    textAlign: 'center',
   },
-  formContainer: {
-    width: '100%',
-    backgroundColor: 'transparent',
-  },
-  formTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    marginBottom: 24,
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFEEEE',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  errorText: {
-    color: '#FF3B30',
-    fontSize: 14,
-    marginLeft: 8,
-    flex: 1,
+  form: {
+    gap: 16,
   },
   inputContainer: {
-    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    height: 56,
   },
-  forgotPasswordContainer: {
+  inputIcon: {
+    marginRight: 12,
+  },
+  input: {
+    flex: 1,
+    fontSize: 16,
+  },
+  eyeIcon: {
+    padding: 8,
+  },
+  forgotPassword: {
     alignSelf: 'flex-end',
-    marginBottom: 24,
   },
   forgotPasswordText: {
     fontSize: 14,
-    fontWeight: '500',
+    opacity: 0.7,
   },
   loginButton: {
-    marginTop: 8,
-    height: 50,
+    height: 56,
     borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  dividerContainer: {
+  loginButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  biometricButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 56,
+    borderWidth: 1,
+    borderRadius: 12,
+    gap: 8,
+  },
+  biometricButtonText: {
+    fontSize: 16,
+  },
+  divider: {
     flexDirection: 'row',
     alignItems: 'center',
     marginVertical: 24,
   },
-  divider: {
+  dividerLine: {
     flex: 1,
     height: 1,
   },
   dividerText: {
     marginHorizontal: 16,
-    fontSize: 14,
     opacity: 0.7,
   },
-  socialButtonsContainer: {
+  socialButtons: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 24,
+    justifyContent: 'center',
+    gap: 16,
   },
   socialButton: {
-    flexDirection: 'row',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: 12,
-    borderRadius: 12,
-    width: width / 2 - 32,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
   },
-  socialButtonText: {
-    marginLeft: 8,
-    fontWeight: '500',
-  },
-  registerContainer: {
+  footer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 16,
-    marginBottom: 40,
+    marginTop: 'auto',
+    paddingVertical: 24,
   },
-  registerLink: {
+  footerText: {
+    opacity: 0.7,
+  },
+  signUpText: {
     fontWeight: '600',
   },
 });

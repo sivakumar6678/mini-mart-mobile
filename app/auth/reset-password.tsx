@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Link, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
     Alert,
@@ -17,21 +17,26 @@ import { ThemedView } from '../../components/ThemedView';
 import { useAuth } from '../../context/AuthContext';
 import { useThemeColor } from '../../hooks/useThemeColor';
 
-export default function RegisterScreen() {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+export default function ResetPasswordScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [city, setCity] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
-  const { register, error, clearError } = useAuth();
+  const { token } = useLocalSearchParams<{ token: string }>();
+  const { resetPassword, error, clearError } = useAuth();
 
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
   const borderColor = useThemeColor({}, 'border');
+
+  useEffect(() => {
+    if (!token) {
+      Alert.alert('Error', 'Invalid reset token');
+      router.replace('/auth/login');
+    }
+  }, [token]);
 
   useEffect(() => {
     if (error) {
@@ -40,8 +45,8 @@ export default function RegisterScreen() {
     }
   }, [error]);
 
-  const handleRegister = async () => {
-    if (!name || !email || !password || !confirmPassword || !city) {
+  const handleResetPassword = async () => {
+    if (!password || !confirmPassword) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
@@ -51,12 +56,26 @@ export default function RegisterScreen() {
       return;
     }
 
+    if (password.length < 8) {
+      Alert.alert('Error', 'Password must be at least 8 characters long');
+      return;
+    }
+
     try {
       setIsLoading(true);
-      await register({ name, email, password, city });
-      router.replace('/');
+      await resetPassword(token, password);
+      Alert.alert(
+        'Success',
+        'Your password has been reset successfully',
+        [
+          {
+            text: 'OK',
+            onPress: () => router.replace('/auth/login'),
+          },
+        ]
+      );
     } catch (error) {
-      console.error('Registration error:', error);
+      console.error('Reset password error:', error);
     } finally {
       setIsLoading(false);
     }
@@ -73,43 +92,18 @@ export default function RegisterScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.header}>
-            <ThemedText style={styles.title}>Create Account</ThemedText>
-            <ThemedText style={styles.subtitle}>Sign up to get started</ThemedText>
+            <ThemedText style={styles.title}>Reset Password</ThemedText>
+            <ThemedText style={styles.subtitle}>
+              Enter your new password below
+            </ThemedText>
           </View>
 
           <View style={styles.form}>
             <View style={[styles.inputContainer, { borderColor }]}>
-              <Ionicons name="person-outline" size={20} color={textColor} style={styles.inputIcon} />
-              <TextInput
-                style={[styles.input, { color: textColor }]}
-                placeholder="Full Name"
-                placeholderTextColor={textColor + '80'}
-                value={name}
-                onChangeText={setName}
-                autoCapitalize="words"
-                autoComplete="name"
-              />
-            </View>
-
-            <View style={[styles.inputContainer, { borderColor }]}>
-              <Ionicons name="mail-outline" size={20} color={textColor} style={styles.inputIcon} />
-              <TextInput
-                style={[styles.input, { color: textColor }]}
-                placeholder="Email"
-                placeholderTextColor={textColor + '80'}
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoComplete="email"
-              />
-            </View>
-
-            <View style={[styles.inputContainer, { borderColor }]}>
               <Ionicons name="lock-closed-outline" size={20} color={textColor} style={styles.inputIcon} />
               <TextInput
                 style={[styles.input, { color: textColor }]}
-                placeholder="Password"
+                placeholder="New Password"
                 placeholderTextColor={textColor + '80'}
                 value={password}
                 onChangeText={setPassword}
@@ -133,7 +127,7 @@ export default function RegisterScreen() {
               <Ionicons name="lock-closed-outline" size={20} color={textColor} style={styles.inputIcon} />
               <TextInput
                 style={[styles.input, { color: textColor }]}
-                placeholder="Confirm Password"
+                placeholder="Confirm New Password"
                 placeholderTextColor={textColor + '80'}
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
@@ -153,35 +147,20 @@ export default function RegisterScreen() {
               </TouchableOpacity>
             </View>
 
-            <View style={[styles.inputContainer, { borderColor }]}>
-              <Ionicons name="location-outline" size={20} color={textColor} style={styles.inputIcon} />
-              <TextInput
-                style={[styles.input, { color: textColor }]}
-                placeholder="City"
-                placeholderTextColor={textColor + '80'}
-                value={city}
-                onChangeText={setCity}
-                autoCapitalize="words"
-                autoComplete="address-line1"
-              />
-            </View>
-
             <ThemedButton
-              onPress={handleRegister}
-              style={styles.registerButton}
+              onPress={handleResetPassword}
+              style={styles.submitButton}
               disabled={isLoading}
-              title={isLoading ? '' : 'Sign Up'}
+              title={isLoading ? '' : 'Reset Password'}
               loading={isLoading}
             />
           </View>
 
           <View style={styles.footer}>
-            <ThemedText style={styles.footerText}>Already have an account? </ThemedText>
-            <Link href="/auth/login" asChild>
-              <TouchableOpacity>
-                <ThemedText style={styles.signInText}>Sign In</ThemedText>
-              </TouchableOpacity>
-            </Link>
+            <ThemedText style={styles.footerText}>Remember your password? </ThemedText>
+            <TouchableOpacity onPress={() => router.replace('/auth/login')}>
+              <ThemedText style={styles.signInText}>Sign In</ThemedText>
+            </TouchableOpacity>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -234,7 +213,7 @@ const styles = StyleSheet.create({
   eyeIcon: {
     padding: 8,
   },
-  registerButton: {
+  submitButton: {
     height: 56,
     borderRadius: 12,
     justifyContent: 'center',
@@ -252,4 +231,4 @@ const styles = StyleSheet.create({
   signInText: {
     fontWeight: '600',
   },
-});
+}); 

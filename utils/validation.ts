@@ -19,6 +19,7 @@ export const registerSchema = yup.object({
     .oneOf([yup.ref('password')], 'Passwords must match')
     .required('Confirm password is required'),
   role: yup.string().oneOf(['customer', 'admin'], 'Invalid role').required('Role is required'),
+  city: yup.string().required('City is required'),
 });
 
 // Address validation schema
@@ -53,6 +54,7 @@ export const productSchema = yup.object({
 export const profileUpdateSchema = yup.object({
   name: yup.string().required('Name is required'),
   email: yup.string().email('Invalid email address').required('Email is required'),
+  city: yup.string().required('City is required'),
 });
 
 // Password change validation schema

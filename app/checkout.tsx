@@ -6,13 +6,14 @@ import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
 import { useCart } from '@/context/CartContext';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { Address } from '@/services/order.service';
+import AddressService from '@/services/address.service';
+import OrderService from '@/services/order.service';
+import PaymentService from '@/services/payment.service';
 import { formatCurrency } from '@/utils/formatCurrency';
 import { addressSchema } from '@/utils/validation';
 import { Ionicons } from '@expo/vector-icons';
 import { yupResolver } from '@hookform/resolvers/yup';
 import * as Haptics from 'expo-haptics';
-import { Image } from 'expo-image';
 import { Stack, router } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
@@ -29,24 +30,39 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
+import { Address } from '../types';
 
 // Mock addresses
 const ADDRESSES: Address[] = [
   {
-    id: 1,
-    street: '123 Main Street, Apartment 4B',
+    id: '1',
+    userId: '1',
+    name: 'Home',
+    phone: '1234567890',
+    addressLine1: '123 Main Street, Apartment 4B',
+    addressLine2: '',
     city: 'Mumbai',
     state: 'Maharashtra',
-    zipCode: '400001',
+    postalCode: '400001',
+    country: 'India',
     isDefault: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   },
   {
-    id: 2,
-    street: '456 Park Avenue',
+    id: '2',
+    userId: '1',
+    name: 'Office',
+    phone: '1234567890',
+    addressLine1: '456 Park Avenue',
+    addressLine2: '',
     city: 'Mumbai',
     state: 'Maharashtra',
-    zipCode: '400002',
+    postalCode: '400002',
+    country: 'India',
     isDefault: false,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   },
 ];
 
@@ -124,13 +140,13 @@ export function CheckoutScreen() {
   const [isSubmittingAddress, setIsSubmittingAddress] = useState(false);
   
   const deliveryFee = useMemo(() => 
-    cart.total > 500 ? 0 : 40,
-    [cart.total]
+    cart?.total ? (cart.total > 500 ? 0 : 40) : 40,
+    [cart?.total]
   );
 
   const totalWithDelivery = useMemo(() => 
-    cart.total + deliveryFee,
-    [cart.total, deliveryFee]
+    (cart?.total || 0) + deliveryFee,
+    [cart?.total, deliveryFee]
   );
 
   const { control, handleSubmit, formState: { errors } } = useForm<CheckoutFormData>({
@@ -147,15 +163,24 @@ export function CheckoutScreen() {
     const loadAddresses = async () => {
       setIsLoading(true);
       try {
-        // Simulate API call
-        setTimeout(() => {
-          setAddresses(ADDRESSES);
-          const defaultAddress = ADDRESSES.find(addr => addr.isDefault);
-          setSelectedAddress(defaultAddress || null);
-          setIsLoading(false);
-        }, 500);
-      } catch (error) {
+        const userAddresses = await AddressService.getAddresses();
+        setAddresses(userAddresses);
+        
+        // Try to get default address first
+        const defaultAddress = userAddresses.find(addr => addr.isDefault);
+        if (defaultAddress) {
+          setSelectedAddress(defaultAddress);
+        } else if (userAddresses.length > 0) {
+          setSelectedAddress(userAddresses[0]);
+        }
+      } catch (error: any) {
         console.error('Error loading addresses:', error);
+        Alert.alert(
+          'Error',
+          'Failed to load addresses. Please check your connection.',
+          [{ text: 'OK' }]
+        );
+      } finally {
         setIsLoading(false);
       }
     };
@@ -178,7 +203,7 @@ export function CheckoutScreen() {
   }, []);
 
   const handleAddAddress = async (data: CheckoutFormData) => {
-    if (isSubmittingAddress) return;
+    if (isSubmittingAddress || !user) return;
     
     setIsSubmittingAddress(true);
     try {
@@ -188,29 +213,46 @@ export function CheckoutScreen() {
         throw new Error('Please fill in all address fields');
       }
       
-      const newAddress: Address = {
-        id: Date.now(),
-        ...data,
-        isDefault: addresses.length === 0,
+      const addressData = {
+        userId: user.id,
+        name: 'Home',
+        phone: user.phone || '',
+        addressLine1: data.street,
+        addressLine2: '',
+        city: data.city,
+        state: data.state,
+        postalCode: data.zipCode,
+        country: 'India',
       };
+      
+      const newAddress = await AddressService.createAddress(addressData);
       
       setAddresses([...addresses, newAddress]);
       setSelectedAddress(newAddress);
       setIsAddingAddress(false);
       
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (error) {
+    } catch (error: any) {
+      console.error('Error adding address:', error);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to add address');
+      Alert.alert(
+        'Error', 
+        error.response?.data?.message || 'Failed to add address. Please try again.'
+      );
     } finally {
       setIsSubmittingAddress(false);
     }
   };
 
   const handlePlaceOrder = async () => {
-    if (!selectedAddress) {
+    if (!selectedAddress || !user) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Error', 'Please select a delivery address');
+      return;
+    }
+
+    if (!cart || cart.items.length === 0) {
+      Alert.alert('Error', 'Your cart is empty');
       return;
     }
 
@@ -220,16 +262,39 @@ export function CheckoutScreen() {
     setIsSubmitting(true);
     
     try {
-      // Simulate API call to place order
-      const response = await new Promise((resolve, reject) => {
-        setTimeout(() => {
-          if (Math.random() > 0.1) { // 90% success rate
-            resolve({ success: true });
-          } else {
-            reject(new Error('Network error'));
-          }
-        }, 1000);
-      });
+      // Prepare order data
+      const orderItems = cart.items.map(item => ({
+        id: item.id,
+        productId: item.productId,
+        quantity: item.quantity,
+        price: item.price,
+        total: item.total,
+      }));
+
+      const orderData = {
+        items: orderItems,
+        shippingAddressId: selectedAddress.id,
+        paymentMethodId: selectedPaymentMethod,
+      };
+
+      // Place order via API
+      const order = await OrderService.createOrder(orderData);
+      
+      // Process payment if not COD
+      if (selectedPaymentMethod !== 'cod') {
+        const paymentData = {
+          orderId: parseInt(order.id),
+          amount: totalWithDelivery,
+          paymentMethodId: selectedPaymentMethod,
+          currency: 'INR',
+        };
+        
+        const paymentResult = await PaymentService.processPayment(paymentData);
+        
+        if (!paymentResult.success) {
+          throw new Error(paymentResult.message || 'Payment failed');
+        }
+      }
       
       setOrderSuccess(true);
       
@@ -245,7 +310,7 @@ export function CheckoutScreen() {
         clearCart();
         router.replace({
           pathname: '/order/confirmation',
-          params: { orderId: Date.now().toString() }
+          params: { orderId: order.id }
         });
       }, 1500);
     } catch (error) {
@@ -323,7 +388,7 @@ export function CheckoutScreen() {
     );
   }
 
-  if (cart.items.length === 0) {
+  if (!cart || cart.items.length === 0) {
     return (
       <ThemedView style={styles.emptyCartContainer}>
         <Stack.Screen options={{ title: 'Checkout' }} />
@@ -352,6 +417,10 @@ export function CheckoutScreen() {
     );
   }
 
+  // At this point, we know cart is not null
+  const cartItems = cart.items;
+  const cartTotal = cart.total;
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
@@ -364,7 +433,7 @@ export function CheckoutScreen() {
           headerRight: () => (
             <View style={styles.headerRight}>
               <ThemedText style={styles.cartCount}>
-                {cart.items.length} {cart.items.length === 1 ? 'item' : 'items'}
+                {cartItems.length} {cartItems.length === 1 ? 'item' : 'items'}
               </ThemedText>
             </View>
           )
@@ -449,20 +518,15 @@ export function CheckoutScreen() {
             
             <View style={[styles.summaryContainer, { backgroundColor: colors.cardBackground }]}>
               <View style={styles.cartItemsPreview}>
-                {cart.items.slice(0, 2).map((item) => (
-                  <View key={item.product.id} style={styles.cartItemPreview}>
-                    <Image
-                      source={{ uri: item.product.images[0] }}
-                      style={styles.cartItemImage}
-                      contentFit="cover"
-                    />
+                {cartItems.slice(0, 2).map((item) => (
+                  <View key={item.id} style={styles.cartItemPreview}>
                     <View style={styles.cartItemInfo}>
                       <ThemedText style={styles.cartItemName} numberOfLines={1}>
-                        {item.product.name}
+                        {item.productId}
                       </ThemedText>
                       <View style={styles.cartItemDetails}>
                         <ThemedText style={styles.cartItemPrice}>
-                          {formatCurrency(item.product.discountedPrice || item.product.price)}
+                          {formatCurrency(item.price)}
                         </ThemedText>
                         <ThemedText style={styles.cartItemQuantity}>
                           × {item.quantity}
@@ -472,10 +536,10 @@ export function CheckoutScreen() {
                   </View>
                 ))}
                 
-                {cart.items.length > 2 && (
+                {cartItems.length > 2 && (
                   <View style={[styles.moreItemsBadge, { backgroundColor: colors.tint + '20' }]}>
                     <ThemedText style={[styles.moreItemsText, { color: colors.tint }]}>
-                      +{cart.items.length - 2} more items
+                      +{cartItems.length - 2} more items
                     </ThemedText>
                   </View>
                 )}
@@ -485,7 +549,7 @@ export function CheckoutScreen() {
               
               <View style={styles.summaryRow}>
                 <ThemedText>Subtotal</ThemedText>
-                <ThemedText>{formatCurrency(cart.total)}</ThemedText>
+                <ThemedText>{formatCurrency(cartTotal)}</ThemedText>
               </View>
               
               <View style={styles.summaryRow}>
@@ -631,12 +695,12 @@ export function CheckoutScreen() {
                           color={selectedAddress?.id === address.id ? colors.tint : colors.tabIconDefault} 
                         />
                         <ThemedText style={styles.addressText}>
-                          {address.street}
+                          {address.addressLine1}
                         </ThemedText>
                       </View>
                       
                       <ThemedText style={styles.addressDetails}>
-                        {address.city}, {address.state} {address.zipCode}
+                        {address.city}, {address.state} {address.postalCode}
                       </ThemedText>
                       
                       {address.isDefault && (
@@ -925,11 +989,6 @@ const styles = StyleSheet.create({
   cartItemPreview: {
     flexDirection: 'row',
     marginBottom: 12,
-  },
-  cartItemImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 8,
   },
   cartItemInfo: {
     flex: 1,

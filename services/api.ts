@@ -1,21 +1,28 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
+import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
 // Base URL for the API
 const API_URL = 'http://127.0.0.1:5000/api';
+
+// Extend the InternalAxiosRequestConfig to include _retry
+interface CustomAxiosRequestConfig extends InternalAxiosRequestConfig {
+  _retry?: boolean;
+}
 
 // Create axios instance
 const api = axios.create({
   baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
+    'Accept': 'application/json',
   },
+  withCredentials: true,
 });
 
 // Add request interceptor to add auth token to requests
 api.interceptors.request.use(
   async (config) => {
-    const token = await AsyncStorage.getItem('token');
+    const token = await AsyncStorage.getItem('auth_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -26,26 +33,15 @@ api.interceptors.request.use(
   }
 );
 
-// Add response interceptor to handle token expiration
+// Add response interceptor to handle token expiration and errors
 api.interceptors.response.use(
-  (response) => {
-    return response;
-  },
-  async (error) => {
-    const originalRequest = error.config;
-    
-    // If the error is 401 (Unauthorized) and we haven't retried yet
-    if (error.response.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-      
-      // Clear token and redirect to login
-      await AsyncStorage.removeItem('token');
-      await AsyncStorage.removeItem('user');
-      
-      // We'll handle redirection to login in the auth context
-      return Promise.reject(error);
+  (response) => response,
+  async (error: AxiosError) => {
+    if (error.response?.status === 401) {
+      // Handle token refresh or logout
+      await AsyncStorage.removeItem('auth_token');
+      // You might want to trigger a logout action here
     }
-    
     return Promise.reject(error);
   }
 );

@@ -3,22 +3,24 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { Order } from '@/services/order.service';
+import OrderService, { Order } from '@/services/order.service';
 import { formatCurrency } from '@/utils/formatCurrency';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Animated,
-    Dimensions,
-    Linking,
-    ScrollView,
-    StyleSheet,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Dimensions,
+  Linking,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  View
 } from 'react-native';
 
 // Mock order data (same as in orders.tsx)
@@ -202,48 +204,95 @@ export default function OrderTrackingScreen() {
   const [order, setOrder] = useState<ExtendedOrder | null>(null);
   const [address, setAddress] = useState<any | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeStep, setActiveStep] = useState(0);
+  const [error, setError] = useState<string | null>(null);
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const progressAnimation = useRef(new Animated.Value(0)).current;
   const { width } = Dimensions.get('window');
 
-  useEffect(() => {
-    const loadOrderDetails = async () => {
+  const loadOrderDetails = useCallback(async (showRefreshing = false) => {
+    if (showRefreshing) {
+      setIsRefreshing(true);
+    } else {
       setIsLoading(true);
-      try {
-        // Simulate API call
-        setTimeout(() => {
-          const foundOrder = ORDERS.find(o => o.id === Number(id)) as ExtendedOrder;
-          setOrder(foundOrder || null);
-          
-          if (foundOrder) {
-            const orderAddress = ADDRESSES.find(a => a.id === foundOrder.addressId);
-            setAddress(orderAddress || null);
-            
-            // Set active step based on status updates
-            if (foundOrder.statusUpdates) {
-              setActiveStep(foundOrder.statusUpdates.length - 1);
-              
-              // Animate progress
-              Animated.timing(progressAnimation, {
-                toValue: foundOrder.statusUpdates.length - 1,
-                duration: 1000,
-                useNativeDriver: false,
-              }).start();
-            }
-          }
-          
-          setIsLoading(false);
-        }, 500);
-      } catch (error) {
-        console.error('Error loading order details:', error);
-        setIsLoading(false);
-      }
-    };
+    }
+    setError(null);
 
+    try {
+      if (!id) {
+        throw new Error('Order ID is required');
+      }
+
+      try {
+        const orderData = await OrderService.getOrderById(Number(id));
+        setOrder(orderData as ExtendedOrder);
+        
+        // Set active step based on order status
+        const statusSteps = ['pending', 'confirmed', 'dispatched', 'delivered'];
+        const currentStepIndex = statusSteps.indexOf(orderData.status);
+        setActiveStep(Math.max(0, currentStepIndex));
+        
+        // Animate progress
+        Animated.timing(progressAnimation, {
+          toValue: Math.max(0, currentStepIndex),
+          duration: 1000,
+          useNativeDriver: false,
+        }).start();
+      } catch (apiError) {
+        console.warn('API not available, using mock data:', apiError);
+        // Use mock data as fallback
+        const foundOrder = ORDERS.find(o => o.id === Number(id)) as ExtendedOrder;
+        if (foundOrder) {
+          setOrder(foundOrder);
+          
+          if (foundOrder.statusUpdates) {
+            setActiveStep(foundOrder.statusUpdates.length - 1);
+            
+            // Animate progress
+            Animated.timing(progressAnimation, {
+              toValue: foundOrder.statusUpdates.length - 1,
+              duration: 1000,
+              useNativeDriver: false,
+            }).start();
+          }
+        } else {
+          throw new Error('Order not found');
+        }
+      }
+
+    } catch (error: any) {
+      console.error('Error loading order details:', error);
+      setError(error.message || 'Failed to load order details');
+      
+      if (showRefreshing) {
+        // Don't show alert on refresh
+        console.log('Failed to refresh order data');
+      } else {
+        Alert.alert(
+          'Error',
+          'Order not found or failed to load. Please try again.',
+          [
+            { text: 'Retry', onPress: () => loadOrderDetails() },
+            { text: 'Back', onPress: () => router.back() }
+          ]
+        );
+      }
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [id, progressAnimation]);
+
+  useEffect(() => {
     loadOrderDetails();
-  }, [id]);
+  }, [loadOrderDetails]);
+
+  const handleRefresh = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    loadOrderDetails(true);
+  }, [loadOrderDetails]);
 
   const handleContactDeliveryPartner = () => {
     if (order?.deliveryPartner) {
@@ -380,7 +429,17 @@ export default function OrderTrackingScreen() {
     <ThemedView style={styles.container}>
       <Stack.Screen options={{ title: `Track Order #${order.id}` }} />
       
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            colors={[colors.tint]}
+            tintColor={colors.tint}
+          />
+        }
+      >
         {/* Delivery Status Card */}
         <View style={[styles.deliveryStatusCard, { backgroundColor: colors.cardBackground }]}>
           <View style={styles.deliveryStatusHeader}>

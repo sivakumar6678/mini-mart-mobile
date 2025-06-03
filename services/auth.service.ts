@@ -1,91 +1,156 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { User } from '../types';
 import api from './api';
 
-interface LoginCredentials {
-  email: string;
-  password: string;
-}
+// TODO: Replace with actual API endpoints
+const API_URL = 'http://127.0.0.1:5000';
 
-interface RegisterData {
-  name: string;
-  email: string;
-  password: string;
-  role: 'customer' | 'admin';
-}
+const TOKEN_STORAGE_KEY = 'auth_token';
+const USER_STORAGE_KEY = 'auth_user';
+const BIOMETRIC_ENABLED_KEY = 'biometric_enabled';
 
-interface User {
-  id: number;
-  name: string;
-  email: string;
-  role: string;
-}
-
-interface AuthResponse {
-  token: string;
+export interface AuthResponse {
   user: User;
+  token: string;
 }
 
-const AuthService = {
-  login: async (credentials: LoginCredentials): Promise<AuthResponse> => {
-    const response = await api.post('/auth/login', credentials);
-    
-    // Store token and user data
-    await AsyncStorage.setItem('token', response.data.token);
-    await AsyncStorage.setItem('user', JSON.stringify(response.data.user));
-    
-    return response.data;
-  },
-  
-  register: async (data: RegisterData): Promise<AuthResponse> => {
-    const response = await api.post('/auth/register', data);
-    
-    // Store token and user data
-    await AsyncStorage.setItem('token', response.data.token);
-    await AsyncStorage.setItem('user', JSON.stringify(response.data.user));
-    
-    return response.data;
-  },
-  
-  logout: async (): Promise<void> => {
-    await AsyncStorage.removeItem('token');
-    await AsyncStorage.removeItem('user');
-    await AsyncStorage.removeItem('cart');
-  },
-  
-  getCurrentUser: async (): Promise<User | null> => {
-    const userStr = await AsyncStorage.getItem('user');
-    if (userStr) {
-      return JSON.parse(userStr);
-    }
-    return null;
-  },
-  
-  updateProfile: async (data: Partial<User>): Promise<User> => {
-    const response = await api.put('/users/profile', data);
-    
-    // Update stored user data
-    const currentUser = await AuthService.getCurrentUser();
-    if (currentUser) {
-      const updatedUser = { ...currentUser, ...response.data };
-      await AsyncStorage.setItem('user', JSON.stringify(updatedUser));
-    }
-    
-    return response.data;
-  },
-  
-  changePassword: async (data: { currentPassword: string; newPassword: string }): Promise<void> => {
-    await api.put('/users/password', data);
-  },
-  
-  isAuthenticated: async (): Promise<boolean> => {
-    const token = await AsyncStorage.getItem('token');
-    return !!token;
-  },
-  
-  getRole: async (): Promise<string | null> => {
-    const user = await AuthService.getCurrentUser();
-    return user ? user.role : null;
-  }
-};
+export interface SocialAuthConfig {
+  googleClientId: string;
+  facebookAppId: string;
+  appleServiceId: string;
+}
 
-export default AuthService;
+class AuthService {
+  private biometricEnabled: boolean = false;
+
+  constructor() {
+    this.loadBiometricPreference();
+  }
+
+  private async loadBiometricPreference() {
+    try {
+      const value = await AsyncStorage.getItem('biometricEnabled');
+      this.biometricEnabled = value === 'true';
+    } catch (error) {
+      console.error('Error loading biometric preference:', error);
+    }
+  }
+
+  async login(email: string, password: string): Promise<User> {
+    try {
+      const response = await api.post('/auth/login', { email, password });
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async register(userData: Partial<User>): Promise<User> {
+    try {
+      const response = await api.post('/auth/register', userData);
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async logout(): Promise<void> {
+    try {
+      await api.post('/auth/logout');
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async refreshToken(): Promise<{ token: string }> {
+    try {
+      const response = await api.post('/auth/refresh-token');
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async verifyEmail(token: string): Promise<void> {
+    try {
+      await api.post('/auth/verify-email', { token });
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async verifyPhone(code: string): Promise<void> {
+    try {
+      await api.post('/auth/verify-phone', { code });
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async requestPasswordReset(email: string): Promise<void> {
+    try {
+      await api.post('/auth/request-password-reset', { email });
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    try {
+      await api.post('/auth/reset-password', { token, newPassword });
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async enableBiometric(): Promise<void> {
+    try {
+      await AsyncStorage.setItem('biometricEnabled', 'true');
+      this.biometricEnabled = true;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async disableBiometric(): Promise<void> {
+    try {
+      await AsyncStorage.setItem('biometricEnabled', 'false');
+      this.biometricEnabled = false;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  isBiometricEnabled(): boolean {
+    return this.biometricEnabled;
+  }
+
+  async loginWithGoogle(credential: string): Promise<User> {
+    try {
+      const response = await api.post('/auth/google', { credential });
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async loginWithApple(credential: string): Promise<User> {
+    try {
+      const response = await api.post('/auth/apple', { credential });
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async loginWithFacebook(credential: string): Promise<User> {
+    try {
+      const response = await api.post('/auth/facebook', { credential });
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  }
+}
+
+export const authService = new AuthService();

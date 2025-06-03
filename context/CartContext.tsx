@@ -1,102 +1,153 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import CartService, { Cart } from '../services/cart.service';
-import { Product } from '../services/product.service';
+import cartService from '../services/cart.service';
+import { Cart, CartItem } from '../types';
 
 interface CartContextType {
-  cart: Cart;
+  cart: Cart | null;
   isLoading: boolean;
-  addToCart: (product: Product, quantity?: number) => Promise<void>;
-  updateQuantity: (productId: number, quantity: number) => Promise<void>;
-  removeItem: (productId: number) => Promise<void>;
+  error: string | null;
+  addToCart: (productId: string, quantity: number) => Promise<void>;
+  updateCartItem: (itemId: string, quantity: number) => Promise<void>;
+  removeFromCart: (itemId: string) => Promise<void>;
   clearCart: () => Promise<void>;
-  itemCount: number;
+  getCartTotal: () => Promise<number>;
+  getCartItemCount: () => Promise<number>;
+  validateCart: () => Promise<{
+    isValid: boolean;
+    invalidItems: CartItem[];
+  }>;
+  clearError: () => void;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
-export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [cart, setCart] = useState<Cart>({ items: [], total: 0 });
+export function CartProvider({ children }: { children: React.ReactNode }) {
+  const [cart, setCart] = useState<Cart | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const loadCart = async () => {
-      try {
-        const savedCart = await CartService.getCart();
-        setCart(savedCart);
-      } catch (error) {
-        console.error('Error loading cart:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
     loadCart();
   }, []);
 
-  const addToCart = async (product: Product, quantity: number = 1) => {
+  const loadCart = async () => {
     try {
-      const updatedCart = await CartService.addToCart(product, quantity);
-      setCart(updatedCart);
+      setIsLoading(true);
+      const cartData = await cartService.getCart();
+      setCart(cartData);
     } catch (error) {
-      console.error('Error adding to cart:', error);
-      throw error;
+      setError(error instanceof Error ? error.message : 'Failed to load cart');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const updateQuantity = async (productId: number, quantity: number) => {
+  const addToCart = async (productId: string, quantity: number) => {
     try {
-      const updatedCart = await CartService.updateCartItemQuantity(productId, quantity);
+      setIsLoading(true);
+      const updatedCart = await cartService.addToCart(productId, quantity);
       setCart(updatedCart);
     } catch (error) {
-      console.error('Error updating cart quantity:', error);
+      setError(error instanceof Error ? error.message : 'Failed to add item to cart');
       throw error;
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const removeItem = async (productId: number) => {
+  const updateCartItem = async (itemId: string, quantity: number) => {
     try {
-      const updatedCart = await CartService.removeFromCart(productId);
+      setIsLoading(true);
+      const updatedCart = await cartService.updateCartItem(itemId, quantity);
       setCart(updatedCart);
     } catch (error) {
-      console.error('Error removing from cart:', error);
+      setError(error instanceof Error ? error.message : 'Failed to update cart item');
       throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const removeFromCart = async (itemId: string) => {
+    try {
+      setIsLoading(true);
+      const updatedCart = await cartService.removeFromCart(itemId);
+      setCart(updatedCart);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to remove item from cart');
+      throw error;
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const clearCart = async () => {
     try {
-      await CartService.clearCart();
-      setCart({ items: [], total: 0 });
+      setIsLoading(true);
+      await cartService.clearCart();
+      setCart(null);
     } catch (error) {
-      console.error('Error clearing cart:', error);
+      setError(error instanceof Error ? error.message : 'Failed to clear cart');
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const getCartTotal = async () => {
+    try {
+      return await cartService.getCartTotal();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to get cart total');
       throw error;
     }
   };
 
-  // Calculate total number of items in cart
-  const itemCount = cart.items.reduce((count, item) => count + item.quantity, 0);
+  const getCartItemCount = async () => {
+    try {
+      return await cartService.getCartItemCount();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to get cart item count');
+      throw error;
+    }
+  };
+
+  const validateCart = async () => {
+    try {
+      return await cartService.validateCart();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to validate cart');
+      throw error;
+    }
+  };
+
+  const clearError = () => setError(null);
 
   return (
     <CartContext.Provider
       value={{
         cart,
         isLoading,
+        error,
         addToCart,
-        updateQuantity,
-        removeItem,
+        updateCartItem,
+        removeFromCart,
         clearCart,
-        itemCount,
+        getCartTotal,
+        getCartItemCount,
+        validateCart,
+        clearError,
       }}
     >
       {children}
     </CartContext.Provider>
   );
-};
+}
 
-export const useCart = () => {
+export function useCart() {
   const context = useContext(CartContext);
   if (context === undefined) {
     throw new Error('useCart must be used within a CartProvider');
   }
   return context;
-};
+}

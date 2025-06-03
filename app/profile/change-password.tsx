@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Link, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
     Alert,
@@ -17,17 +17,16 @@ import { ThemedView } from '../../components/ThemedView';
 import { useAuth } from '../../context/AuthContext';
 import { useThemeColor } from '../../hooks/useThemeColor';
 
-export default function RegisterScreen() {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+export default function ChangePasswordScreen() {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [city, setCity] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
-  const { register, error, clearError } = useAuth();
+  const { changePassword, error, clearError } = useAuth();
 
   const backgroundColor = useThemeColor({}, 'background');
   const textColor = useThemeColor({}, 'text');
@@ -40,23 +39,37 @@ export default function RegisterScreen() {
     }
   }, [error]);
 
-  const handleRegister = async () => {
-    if (!name || !email || !password || !confirmPassword || !city) {
+  const handleChangePassword = async () => {
+    if (!currentPassword || !newPassword || !confirmPassword) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
 
-    if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
+    if (newPassword !== confirmPassword) {
+      Alert.alert('Error', 'New passwords do not match');
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      Alert.alert('Error', 'New password must be at least 8 characters long');
       return;
     }
 
     try {
       setIsLoading(true);
-      await register({ name, email, password, city });
-      router.replace('/');
+      await changePassword(currentPassword, newPassword);
+      Alert.alert(
+        'Success',
+        'Password changed successfully',
+        [
+          {
+            text: 'OK',
+            onPress: () => router.back(),
+          },
+        ]
+      );
     } catch (error) {
-      console.error('Registration error:', error);
+      console.error('Change password error:', error);
     } finally {
       setIsLoading(false);
     }
@@ -73,56 +86,31 @@ export default function RegisterScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.header}>
-            <ThemedText style={styles.title}>Create Account</ThemedText>
-            <ThemedText style={styles.subtitle}>Sign up to get started</ThemedText>
+            <ThemedText style={styles.title}>Change Password</ThemedText>
+            <ThemedText style={styles.subtitle}>
+              Enter your current password and choose a new one
+            </ThemedText>
           </View>
 
           <View style={styles.form}>
             <View style={[styles.inputContainer, { borderColor }]}>
-              <Ionicons name="person-outline" size={20} color={textColor} style={styles.inputIcon} />
-              <TextInput
-                style={[styles.input, { color: textColor }]}
-                placeholder="Full Name"
-                placeholderTextColor={textColor + '80'}
-                value={name}
-                onChangeText={setName}
-                autoCapitalize="words"
-                autoComplete="name"
-              />
-            </View>
-
-            <View style={[styles.inputContainer, { borderColor }]}>
-              <Ionicons name="mail-outline" size={20} color={textColor} style={styles.inputIcon} />
-              <TextInput
-                style={[styles.input, { color: textColor }]}
-                placeholder="Email"
-                placeholderTextColor={textColor + '80'}
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoComplete="email"
-              />
-            </View>
-
-            <View style={[styles.inputContainer, { borderColor }]}>
               <Ionicons name="lock-closed-outline" size={20} color={textColor} style={styles.inputIcon} />
               <TextInput
                 style={[styles.input, { color: textColor }]}
-                placeholder="Password"
+                placeholder="Current Password"
                 placeholderTextColor={textColor + '80'}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPassword}
+                value={currentPassword}
+                onChangeText={setCurrentPassword}
+                secureTextEntry={!showCurrentPassword}
                 autoCapitalize="none"
-                autoComplete="password-new"
+                autoComplete="password"
               />
               <TouchableOpacity
-                onPress={() => setShowPassword(!showPassword)}
+                onPress={() => setShowCurrentPassword(!showCurrentPassword)}
                 style={styles.eyeIcon}
               >
                 <Ionicons
-                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                  name={showCurrentPassword ? 'eye-off-outline' : 'eye-outline'}
                   size={20}
                   color={textColor}
                 />
@@ -133,7 +121,31 @@ export default function RegisterScreen() {
               <Ionicons name="lock-closed-outline" size={20} color={textColor} style={styles.inputIcon} />
               <TextInput
                 style={[styles.input, { color: textColor }]}
-                placeholder="Confirm Password"
+                placeholder="New Password"
+                placeholderTextColor={textColor + '80'}
+                value={newPassword}
+                onChangeText={setNewPassword}
+                secureTextEntry={!showNewPassword}
+                autoCapitalize="none"
+                autoComplete="password-new"
+              />
+              <TouchableOpacity
+                onPress={() => setShowNewPassword(!showNewPassword)}
+                style={styles.eyeIcon}
+              >
+                <Ionicons
+                  name={showNewPassword ? 'eye-off-outline' : 'eye-outline'}
+                  size={20}
+                  color={textColor}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <View style={[styles.inputContainer, { borderColor }]}>
+              <Ionicons name="lock-closed-outline" size={20} color={textColor} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.input, { color: textColor }]}
+                placeholder="Confirm New Password"
                 placeholderTextColor={textColor + '80'}
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
@@ -153,35 +165,13 @@ export default function RegisterScreen() {
               </TouchableOpacity>
             </View>
 
-            <View style={[styles.inputContainer, { borderColor }]}>
-              <Ionicons name="location-outline" size={20} color={textColor} style={styles.inputIcon} />
-              <TextInput
-                style={[styles.input, { color: textColor }]}
-                placeholder="City"
-                placeholderTextColor={textColor + '80'}
-                value={city}
-                onChangeText={setCity}
-                autoCapitalize="words"
-                autoComplete="address-line1"
-              />
-            </View>
-
             <ThemedButton
-              onPress={handleRegister}
-              style={styles.registerButton}
+              onPress={handleChangePassword}
+              style={styles.submitButton}
               disabled={isLoading}
-              title={isLoading ? '' : 'Sign Up'}
+              title={isLoading ? '' : 'Change Password'}
               loading={isLoading}
             />
-          </View>
-
-          <View style={styles.footer}>
-            <ThemedText style={styles.footerText}>Already have an account? </ThemedText>
-            <Link href="/auth/login" asChild>
-              <TouchableOpacity>
-                <ThemedText style={styles.signInText}>Sign In</ThemedText>
-              </TouchableOpacity>
-            </Link>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -234,22 +224,10 @@ const styles = StyleSheet.create({
   eyeIcon: {
     padding: 8,
   },
-  registerButton: {
+  submitButton: {
     height: 56,
     borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  footer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: 'auto',
-    paddingVertical: 24,
-  },
-  footerText: {
-    opacity: 0.7,
-  },
-  signInText: {
-    fontWeight: '600',
-  },
-});
+}); 

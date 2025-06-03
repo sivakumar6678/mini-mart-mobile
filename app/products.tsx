@@ -2,13 +2,22 @@ import { ProductCard } from '@/components/product/ProductCard';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { Colors } from '@/constants/Colors';
-import { useCity } from '@/context/CityContext';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { Product } from '@/services/product.service';
+import ProductService, { Product, ProductFilter } from '@/services/product.service';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack } from 'expo-router';
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import { Stack, useLocalSearchParams } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  RefreshControl,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  View
+} from 'react-native';
 
 // Mock data for products (same as in category screen)
 const PRODUCTS: Product[] = [
@@ -109,202 +118,379 @@ const CATEGORIES = [
 
 // Sort options
 const SORT_OPTIONS = [
+  { label: 'Relevance', value: 'relevance' },
   { label: 'Price: Low to High', value: 'price_asc' },
   { label: 'Price: High to Low', value: 'price_desc' },
   { label: 'Name: A to Z', value: 'name_asc' },
   { label: 'Name: Z to A', value: 'name_desc' },
+  { label: 'Newest First', value: 'newest' },
 ];
 
 export default function ProductsScreen() {
-  const { selectedCity } = useCity();
+  const params = useLocalSearchParams();
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState(params.search as string || '');
   const [selectedCategory, setSelectedCategory] = useState('All');
-  const [sortOption, setSortOption] = useState('');
-  const [showSortOptions, setShowSortOptions] = useState(false);
+  const [selectedSort, setSelectedSort] = useState('relevance');
+  const [showFilters, setShowFilters] = useState(false);
+  const [priceRange, setPriceRange] = useState({ min: '', max: '' });
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
-  useEffect(() => {
-    const loadProducts = async () => {
+  const loadProducts = useCallback(async (showRefreshing = false) => {
+    if (showRefreshing) {
+      setIsRefreshing(true);
+    } else {
       setIsLoading(true);
-      try {
-        // Simulate API call
-        setTimeout(() => {
-          // In a real app, we would filter by city here
-          setProducts(PRODUCTS);
-          setFilteredProducts(PRODUCTS);
-          setIsLoading(false);
-        }, 500);
-      } catch (error) {
-        console.error('Error loading products:', error);
-        setIsLoading(false);
-      }
-    };
+    }
 
-    loadProducts();
-  }, [selectedCity]);
+    try {
+      const filters: ProductFilter = {};
+      
+      if (searchQuery) {
+        filters.search = searchQuery;
+      }
+      
+      if (selectedCategory !== 'All') {
+        filters.category = selectedCategory;
+      }
+      
+      if (priceRange.min) {
+        filters.minPrice = parseFloat(priceRange.min);
+      }
+      
+      if (priceRange.max) {
+        filters.maxPrice = parseFloat(priceRange.max);
+      }
+
+      try {
+        const allProducts = await ProductService.getAllProducts(filters);
+        setProducts(allProducts);
+      } catch (apiError) {
+        console.warn('API not available, using mock data:', apiError);
+        // Use mock data as fallback
+        let filteredMockProducts = [...PRODUCTS];
+        
+        // Apply filters to mock data
+        if (filters.search) {
+          filteredMockProducts = filteredMockProducts.filter(product =>
+            product.name.toLowerCase().includes(filters.search!.toLowerCase()) ||
+            product.description.toLowerCase().includes(filters.search!.toLowerCase())
+          );
+        }
+        
+        if (filters.category) {
+          filteredMockProducts = filteredMockProducts.filter(product =>
+            product.category === filters.category
+          );
+        }
+        
+        if (filters.minPrice) {
+          filteredMockProducts = filteredMockProducts.filter(product =>
+            (product.discountedPrice || product.price) >= filters.minPrice!
+          );
+        }
+        
+        if (filters.maxPrice) {
+          filteredMockProducts = filteredMockProducts.filter(product =>
+            (product.discountedPrice || product.price) <= filters.maxPrice!
+          );
+        }
+        
+        setProducts(filteredMockProducts);
+      }
+    } catch (error: any) {
+      console.error('Error loading products:', error);
+      // Use mock data as final fallback
+      setProducts(PRODUCTS);
+      
+      if (showRefreshing) {
+        // Don't show alert on refresh, just use mock data
+        console.log('Using offline data');
+      } else {
+        Alert.alert(
+          'Offline Mode',
+          'Using offline data. Some features may be limited.',
+          [{ text: 'OK' }]
+        );
+      }
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [searchQuery, selectedCategory, priceRange]);
 
   useEffect(() => {
-    let result = [...products];
+    loadProducts();
+  }, [loadProducts]);
+
+  useEffect(() => {
+    // Apply sorting to products
+    let sorted = [...products];
     
-    // Apply category filter
-    if (selectedCategory !== 'All') {
-      result = result.filter(product => product.category === selectedCategory);
+    switch (selectedSort) {
+      case 'price_asc':
+        sorted.sort((a, b) => (a.discountedPrice || a.price) - (b.discountedPrice || b.price));
+        break;
+      case 'price_desc':
+        sorted.sort((a, b) => (b.discountedPrice || b.price) - (a.discountedPrice || a.price));
+        break;
+      case 'name_asc':
+        sorted.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+      case 'name_desc':
+        sorted.sort((a, b) => b.name.localeCompare(a.name));
+        break;
+      case 'newest':
+        sorted.sort((a, b) => b.id - a.id);
+        break;
+      default:
+        // Keep original order for relevance
+        break;
     }
     
-    // Apply search filter
-    if (searchQuery) {
-      result = result.filter(product =>
-        product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        product.description.toLowerCase().includes(searchQuery.toLowerCase())
-      );
+    setFilteredProducts(sorted);
+  }, [products, selectedSort]);
+
+  const handleRefresh = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    loadProducts(true);
+  }, [loadProducts]);
+
+  const handleSearch = () => {
+    if (searchQuery.trim()) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      loadProducts();
     }
-    
-    // Apply sorting
-    if (sortOption) {
-      switch (sortOption) {
-        case 'price_asc':
-          result.sort((a, b) => {
-            const priceA = a.discountedPrice || a.price;
-            const priceB = b.discountedPrice || b.price;
-            return priceA - priceB;
-          });
-          break;
-        case 'price_desc':
-          result.sort((a, b) => {
-            const priceA = a.discountedPrice || a.price;
-            const priceB = b.discountedPrice || b.price;
-            return priceB - priceA;
-          });
-          break;
-        case 'name_asc':
-          result.sort((a, b) => a.name.localeCompare(b.name));
-          break;
-        case 'name_desc':
-          result.sort((a, b) => b.name.localeCompare(a.name));
-          break;
-      }
-    }
-    
-    setFilteredProducts(result);
-  }, [products, selectedCategory, searchQuery, sortOption]);
+  };
 
   const handleCategorySelect = (category: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedCategory(category);
   };
 
-  const handleSortSelect = (option: string) => {
-    setSortOption(option);
-    setShowSortOptions(false);
+  const handleSortSelect = (sortValue: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedSort(sortValue);
   };
+
+  const clearFilters = () => {
+    setSearchQuery('');
+    setSelectedCategory('All');
+    setSelectedSort('relevance');
+    setPriceRange({ min: '', max: '' });
+    setShowFilters(false);
+  };
+
+  const applyFilters = () => {
+    setShowFilters(false);
+    loadProducts();
+  };
+
+  const renderProductItem = ({ item, index }: { item: Product; index: number }) => (
+    <View style={[styles.productWrapper, index % 2 === 1 && styles.productWrapperRight]}>
+      <ProductCard product={item} />
+    </View>
+  );
+
+  const renderCategoryItem = ({ item }: { item: string }) => (
+    <TouchableOpacity
+      style={[
+        styles.categoryChip,
+        selectedCategory === item && { backgroundColor: colors.tint },
+        { borderColor: colors.border }
+      ]}
+      onPress={() => handleCategorySelect(item)}
+    >
+      <ThemedText
+        style={[
+          styles.categoryText,
+          selectedCategory === item && { color: '#FFFFFF' }
+        ]}
+      >
+        {item}
+      </ThemedText>
+    </TouchableOpacity>
+  );
+
+  const renderSortItem = ({ item }: { item: typeof SORT_OPTIONS[0] }) => (
+    <TouchableOpacity
+      style={[
+        styles.sortItem,
+        selectedSort === item.value && { backgroundColor: colors.tint + '20' }
+      ]}
+      onPress={() => handleSortSelect(item.value)}
+    >
+      <ThemedText
+        style={[
+          styles.sortText,
+          selectedSort === item.value && { color: colors.tint, fontWeight: '600' }
+        ]}
+      >
+        {item.label}
+      </ThemedText>
+      {selectedSort === item.value && (
+        <Ionicons name="checkmark" size={20} color={colors.tint} />
+      )}
+    </TouchableOpacity>
+  );
 
   return (
     <ThemedView style={styles.container}>
-      <Stack.Screen options={{ title: 'All Products' }} />
-      
-      <View style={styles.header}>
-        <View style={[styles.searchContainer, { backgroundColor: colors.cardBackground }]}>
-          <Ionicons name="search" size={20} color={colors.tabIconDefault} />
-          <TextInput
-            style={[styles.searchInput, { color: colors.text }]}
-            placeholder="Search products..."
-            placeholderTextColor={colors.tabIconDefault}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchQuery ? (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={20} color={colors.tabIconDefault} />
-            </TouchableOpacity>
-          ) : null}
-        </View>
-        
-        <View style={styles.filtersContainer}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.categoriesContainer}
-          >
-            {CATEGORIES.map((category) => (
-              <TouchableOpacity
-                key={category}
-                style={[
-                  styles.categoryChip,
-                  selectedCategory === category && { 
-                    backgroundColor: colors.tint,
-                    borderColor: colors.tint,
-                  }
-                ]}
-                onPress={() => handleCategorySelect(category)}
-              >
-                <ThemedText
-                  style={[
-                    styles.categoryChipText,
-                    selectedCategory === category && { color: '#FFFFFF' }
-                  ]}
-                >
-                  {category}
-                </ThemedText>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-          
-          <View style={styles.sortContainer}>
-            <TouchableOpacity
-              style={[styles.sortButton, { borderColor: colors.border }]}
-              onPress={() => setShowSortOptions(!showSortOptions)}
+      <Stack.Screen 
+        options={{ 
+          title: 'Products',
+          headerRight: () => (
+            <TouchableOpacity 
+              style={styles.filterButton}
+              onPress={() => setShowFilters(!showFilters)}
             >
-              <Ionicons name="filter-outline" size={18} color={colors.text} />
-              <ThemedText style={styles.sortButtonText}>Sort</ThemedText>
+              <Ionicons 
+                name={showFilters ? "close" : "options-outline"} 
+                size={24} 
+                color={colors.text} 
+              />
             </TouchableOpacity>
-            
-            {showSortOptions && (
-              <View style={[styles.sortOptions, { backgroundColor: colors.cardBackground }]}>
-                {SORT_OPTIONS.map((option) => (
-                  <TouchableOpacity
-                    key={option.value}
-                    style={[
-                      styles.sortOption,
-                      sortOption === option.value && { backgroundColor: colors.tint + '20' }
-                    ]}
-                    onPress={() => handleSortSelect(option.value)}
-                  >
-                    <ThemedText>{option.label}</ThemedText>
-                    {sortOption === option.value && (
-                      <Ionicons name="checkmark" size={18} color={colors.tint} />
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
+          )
+        }} 
+      />
+
+      {/* Search Bar */}
+      <View style={[styles.searchContainer, { backgroundColor: colors.cardBackground }]}>
+        <Ionicons name="search" size={20} color={colors.tabIconDefault} />
+        <TextInput
+          style={[styles.searchInput, { color: colors.text }]}
+          placeholder="Search products..."
+          placeholderTextColor={colors.tabIconDefault}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          onSubmitEditing={handleSearch}
+          returnKeyType="search"
+        />
+        {searchQuery ? (
+          <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <Ionicons name="close-circle" size={20} color={colors.tabIconDefault} />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {/* Filters Panel */}
+      {showFilters && (
+        <View style={[styles.filtersPanel, { backgroundColor: colors.cardBackground }]}>
+          {/* Categories */}
+          <View style={styles.filterSection}>
+            <ThemedText style={styles.filterTitle}>Categories</ThemedText>
+            <FlatList
+              data={CATEGORIES}
+              renderItem={renderCategoryItem}
+              keyExtractor={(item) => item}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.categoriesList}
+            />
+          </View>
+
+          {/* Price Range */}
+          <View style={styles.filterSection}>
+            <ThemedText style={styles.filterTitle}>Price Range</ThemedText>
+            <View style={styles.priceRangeContainer}>
+              <TextInput
+                style={[styles.priceInput, { backgroundColor: colors.background, color: colors.text }]}
+                placeholder="Min"
+                placeholderTextColor={colors.tabIconDefault}
+                value={priceRange.min}
+                onChangeText={(text) => setPriceRange({ ...priceRange, min: text })}
+                keyboardType="numeric"
+              />
+              <ThemedText style={styles.priceSeparator}>to</ThemedText>
+              <TextInput
+                style={[styles.priceInput, { backgroundColor: colors.background, color: colors.text }]}
+                placeholder="Max"
+                placeholderTextColor={colors.tabIconDefault}
+                value={priceRange.max}
+                onChangeText={(text) => setPriceRange({ ...priceRange, max: text })}
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+
+          {/* Sort Options */}
+          <View style={styles.filterSection}>
+            <ThemedText style={styles.filterTitle}>Sort By</ThemedText>
+            <FlatList
+              data={SORT_OPTIONS}
+              renderItem={renderSortItem}
+              keyExtractor={(item) => item.value}
+              scrollEnabled={false}
+            />
+          </View>
+
+          {/* Filter Actions */}
+          <View style={styles.filterActions}>
+            <TouchableOpacity
+              style={[styles.filterActionButton, { backgroundColor: colors.border }]}
+              onPress={clearFilters}
+            >
+              <ThemedText style={styles.filterActionText}>Clear</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.filterActionButton, { backgroundColor: colors.tint }]}
+              onPress={applyFilters}
+            >
+              <ThemedText style={[styles.filterActionText, { color: '#FFFFFF' }]}>Apply</ThemedText>
+            </TouchableOpacity>
           </View>
         </View>
+      )}
+
+      {/* Results Info */}
+      <View style={styles.resultsInfo}>
+        <ThemedText style={styles.resultsText}>
+          {filteredProducts.length} product{filteredProducts.length !== 1 ? 's' : ''} found
+        </ThemedText>
       </View>
-      
+
+      {/* Products List */}
       {isLoading ? (
-        <ActivityIndicator size="large" color={colors.tint} style={styles.loader} />
-      ) : filteredProducts.length > 0 ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.tint} />
+          <ThemedText style={styles.loadingText}>Loading products...</ThemedText>
+        </View>
+      ) : (
         <FlatList
           data={filteredProducts}
-          renderItem={({ item }) => <ProductCard product={item} />}
+          renderItem={renderProductItem}
           keyExtractor={(item) => item.id.toString()}
           numColumns={2}
-          columnWrapperStyle={styles.productRow}
           contentContainerStyle={styles.productsList}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+              colors={[colors.tint]}
+              tintColor={colors.tint}
+            />
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="search-outline" size={80} color={colors.tabIconDefault} />
+              <ThemedText style={styles.emptyText}>No products found</ThemedText>
+              <ThemedText style={styles.emptySubtext}>
+                Try adjusting your search or filters
+              </ThemedText>
+              <TouchableOpacity
+                style={[styles.clearFiltersButton, { backgroundColor: colors.tint }]}
+                onPress={clearFilters}
+              >
+                <ThemedText style={styles.clearFiltersText}>Clear Filters</ThemedText>
+              </TouchableOpacity>
+            </View>
+          }
         />
-      ) : (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="basket-outline" size={60} color={colors.tabIconDefault} />
-          <ThemedText style={styles.emptyText}>
-            No products found
-          </ThemedText>
-          <ThemedText style={styles.emptySubtext}>
-            Try different search terms or filters
-          </ThemedText>
-        </View>
       )}
     </ThemedView>
   );
@@ -313,18 +499,17 @@ export default function ProductsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 16,
   },
-  header: {
-    marginBottom: 16,
+  filterButton: {
+    padding: 8,
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
+    margin: 16,
     borderRadius: 12,
-    marginBottom: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -336,84 +521,137 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontSize: 16,
   },
-  filtersContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  categoriesContainer: {
-    flexDirection: 'row',
-    paddingRight: 8,
-  },
-  categoryChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    marginRight: 8,
-  },
-  categoryChipText: {
-    fontSize: 14,
-  },
-  sortContainer: {
-    position: 'relative',
-  },
-  sortButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    borderWidth: 1,
-  },
-  sortButtonText: {
-    marginLeft: 4,
-    fontSize: 14,
-  },
-  sortOptions: {
-    position: 'absolute',
-    top: 40,
-    right: 0,
-    width: 200,
+  filtersPanel: {
+    padding: 16,
+    marginHorizontal: 16,
+    marginBottom: 16,
     borderRadius: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
-    elevation: 4,
-    zIndex: 10,
+    elevation: 2,
   },
-  sortOption: {
+  filterSection: {
+    marginBottom: 20,
+  },
+  filterTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  categoriesList: {
+    paddingVertical: 4,
+  },
+  categoryChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    marginRight: 8,
+  },
+  categoryText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  priceRangeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  priceInput: {
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    fontSize: 16,
+  },
+  priceSeparator: {
+    marginHorizontal: 12,
+    fontSize: 16,
+  },
+  sortItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
     paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginBottom: 4,
   },
-  productsList: {
-    paddingBottom: 16,
+  sortText: {
+    fontSize: 16,
   },
-  productRow: {
+  filterActions: {
+    flexDirection: 'row',
     justifyContent: 'space-between',
+    marginTop: 8,
   },
-  loader: {
-    marginTop: 40,
+  filterActionButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginHorizontal: 4,
   },
-  emptyContainer: {
+  filterActionText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  resultsInfo: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  resultsText: {
+    fontSize: 14,
+    opacity: 0.7,
+  },
+  loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    opacity: 0.7,
+  },
+  productsList: {
     padding: 16,
+  },
+  productWrapper: {
+    flex: 1,
+    marginBottom: 16,
+  },
+  productWrapperRight: {
+    marginLeft: 8,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
   },
   emptyText: {
     fontSize: 18,
     fontWeight: '600',
     marginTop: 16,
+    textAlign: 'center',
   },
   emptySubtext: {
-    textAlign: 'center',
-    marginTop: 8,
+    fontSize: 14,
     opacity: 0.7,
+    marginTop: 8,
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  clearFiltersButton: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  clearFiltersText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
