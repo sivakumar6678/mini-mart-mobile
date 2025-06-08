@@ -1,3 +1,6 @@
+import { EmptyState } from '@/components/common/EmptyState';
+import { ErrorBoundary } from '@/components/common/ErrorBoundary';
+import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { ProductCard } from '@/components/product/ProductCard';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
@@ -7,460 +10,599 @@ import ProductService, { Product, ProductFilter } from '@/services/product.servi
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Dimensions,
   FlatList,
+  Platform,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  View
+  View,
 } from 'react-native';
 
-// Mock data for products (same as in category screen)
-const PRODUCTS: Product[] = [
-  {
-    id: 1,
-    name: 'Fresh Organic Apples',
-    description: 'Delicious organic apples from local farms',
-    price: 120,
-    discountedPrice: 99,
-    quantity: 100,
-    category: 'Fruits',
-    images: ['https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6'],
-    shopId: 1,
-  },
-  {
-    id: 2,
-    name: 'Whole Wheat Bread',
-    description: 'Freshly baked whole wheat bread',
-    price: 45,
-    quantity: 50,
-    category: 'Bakery',
-    images: ['https://images.unsplash.com/photo-1598373182133-52452f7691ef'],
-    shopId: 2,
-  },
-  {
-    id: 3,
-    name: 'Organic Milk 1L',
-    description: 'Farm fresh organic milk',
-    price: 60,
-    quantity: 30,
-    category: 'Dairy',
-    images: ['https://images.unsplash.com/photo-1563636619-e9143da7973b'],
-    shopId: 1,
-  },
-  {
-    id: 4,
-    name: 'Fresh Tomatoes',
-    description: 'Ripe and juicy tomatoes',
-    price: 40,
-    discountedPrice: 30,
-    quantity: 80,
-    category: 'Vegetables',
-    images: ['https://images.unsplash.com/photo-1592924357228-91a4daadcfea'],
-    shopId: 3,
-  },
-  {
-    id: 5,
-    name: 'Organic Bananas',
-    description: 'Fresh organic bananas',
-    price: 80,
-    discountedPrice: 65,
-    quantity: 150,
-    category: 'Fruits',
-    images: ['https://images.unsplash.com/photo-1603833665858-e61d17a86224'],
-    shopId: 1,
-  },
-  {
-    id: 6,
-    name: 'Fresh Carrots',
-    description: 'Organic carrots freshly harvested',
-    price: 35,
-    quantity: 80,
-    category: 'Vegetables',
-    images: ['https://images.unsplash.com/photo-1598170845058-32b9d6a5da37'],
-    shopId: 1,
-  },
-  {
-    id: 7,
-    name: 'Greek Yogurt',
-    description: 'Creamy Greek yogurt',
-    price: 75,
-    quantity: 40,
-    category: 'Dairy',
-    images: ['https://images.unsplash.com/photo-1488477181946-6428a0291777'],
-    shopId: 2,
-  },
-  {
-    id: 8,
-    name: 'Chocolate Cookies',
-    description: 'Freshly baked chocolate cookies',
-    price: 60,
-    discountedPrice: 50,
-    quantity: 60,
-    category: 'Bakery',
-    images: ['https://images.unsplash.com/photo-1499636136210-6f4ee915583e'],
-    shopId: 2,
-  },
-];
-
-// Categories for filter
+// Professional Constants with proper typing
 const CATEGORIES = [
   'All',
   'Fruits',
   'Vegetables',
   'Dairy',
   'Bakery',
-];
+  'Beverages',
+  'Snacks',
+  'Meat & Seafood',
+  'Frozen Foods',
+  'Personal Care',
+] as const;
 
-// Sort options
 const SORT_OPTIONS = [
-  { label: 'Relevance', value: 'relevance' },
-  { label: 'Price: Low to High', value: 'price_asc' },
-  { label: 'Price: High to Low', value: 'price_desc' },
-  { label: 'Name: A to Z', value: 'name_asc' },
-  { label: 'Name: Z to A', value: 'name_desc' },
-  { label: 'Newest First', value: 'newest' },
-];
+  { label: 'Relevance', value: 'relevance' as const },
+  { label: 'Price: Low to High', value: 'price_asc' as const },
+  { label: 'Price: High to Low', value: 'price_desc' as const },
+  { label: 'Name: A to Z', value: 'name_asc' as const },
+  { label: 'Name: Z to A', value: 'name_desc' as const },
+  { label: 'Newest First', value: 'newest' as const },
+  { label: 'Rating: High to Low', value: 'rating_desc' as const },
+] as const;
 
-export default function ProductsScreen() {
+const PRICE_RANGES = [
+  { label: 'All Prices', min: undefined, max: undefined },
+  { label: 'Under ₹50', min: 0, max: 50 },
+  { label: '₹50 - ₹100', min: 50, max: 100 },
+  { label: '₹100 - ₹200', min: 100, max: 200 },
+  { label: '₹200 - ₹500', min: 200, max: 500 },
+  { label: 'Above ₹500', min: 500, max: undefined },
+] as const;
+
+// Performance constants
+const { width } = Dimensions.get('window');
+const ITEM_WIDTH = (width - 48) / 2;
+const SEARCH_DEBOUNCE_MS = 300;
+const LOAD_MORE_THRESHOLD = 0.1;
+
+// Professional Type Definitions
+type SortValue = typeof SORT_OPTIONS[number]['value'];
+type CategoryValue = typeof CATEGORIES[number];
+
+interface ProductsState {
+  products: Product[];
+  isLoading: boolean;
+  isRefreshing: boolean;
+  error: string | null;
+  hasMore: boolean;
+  page: number;
+}
+
+interface FiltersState {
+  searchQuery: string;
+  selectedCategory: CategoryValue;
+  selectedSort: SortValue;
+  priceRange: { min?: number; max?: number };
+  showFilters: boolean;
+  inStockOnly: boolean;
+}
+
+/**
+ * Professional Products Screen Component
+ * Features: Advanced filtering, search, pagination, error handling, accessibility
+ */
+function ProductsScreen() {
   const params = useLocalSearchParams();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState(params.search as string || '');
-  const [selectedCategory, setSelectedCategory] = useState('All');
-  const [selectedSort, setSelectedSort] = useState('relevance');
-  const [showFilters, setShowFilters] = useState(false);
-  const [priceRange, setPriceRange] = useState({ min: '', max: '' });
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  
+  // Performance-optimized refs
+  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+  const flatListRef = useRef<FlatList>(null);
+  const filterAnimationRef = useRef(new Animated.Value(0)).current;
+  const isMountedRef = useRef(true);
+  
+  // Centralized state management
+  const [productsState, setProductsState] = useState<ProductsState>({
+    products: [],
+    isLoading: true,
+    isRefreshing: false,
+    error: null,
+    hasMore: false,
+    page: 1,
+  });
 
-  const loadProducts = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) {
-      setIsRefreshing(true);
-    } else {
-      setIsLoading(true);
+  const [filtersState, setFiltersState] = useState<FiltersState>({
+    searchQuery: (params.search as string) || '',
+    selectedCategory: (params.category as CategoryValue) || 'All',
+    selectedSort: 'relevance',
+    priceRange: { min: undefined, max: undefined },
+    showFilters: false,
+    inStockOnly: false,
+  });
+
+  // Memoized filter function for performance
+  const applyFilters = useCallback((products: Product[], filters: FiltersState): Product[] => {
+    let filtered = [...products];
+
+    // Search filter with fuzzy matching
+    if (filters.searchQuery.trim()) {
+      const query = filters.searchQuery.toLowerCase().trim();
+      filtered = filtered.filter(product =>
+        product.name.toLowerCase().includes(query) ||
+        product.description.toLowerCase().includes(query) ||
+        product.category.toLowerCase().includes(query) ||
+        product.brand?.toLowerCase().includes(query)
+      );
     }
+
+    // Category filter
+    if (filters.selectedCategory !== 'All') {
+      filtered = filtered.filter(product => 
+        product.category === filters.selectedCategory
+      );
+    }
+
+    // Price range filter
+    if (filters.priceRange.min !== undefined || filters.priceRange.max !== undefined) {
+      filtered = filtered.filter(product => {
+        const price = product.discountedPrice || product.price;
+        const minCheck = filters.priceRange.min === undefined || price >= filters.priceRange.min;
+        const maxCheck = filters.priceRange.max === undefined || price <= filters.priceRange.max;
+        return minCheck && maxCheck;
+      });
+    }
+
+    // Stock filter
+    if (filters.inStockOnly) {
+      filtered = filtered.filter(product => product.stockStatus !== 'out_of_stock');
+    }
+
+    // Advanced sorting with multiple criteria
+    filtered.sort((a, b) => {
+      switch (filters.selectedSort) {
+        case 'price_asc':
+          return (a.discountedPrice || a.price) - (b.discountedPrice || b.price);
+        case 'price_desc':
+          return (b.discountedPrice || b.price) - (a.discountedPrice || a.price);
+        case 'name_asc':
+          return a.name.localeCompare(b.name);
+        case 'name_desc':
+          return b.name.localeCompare(a.name);
+        case 'rating_desc':
+          return b.rating - a.rating;
+        case 'newest':
+          return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+        default:
+          // Relevance: prioritize in-stock, then rating, then name
+          if (a.stockStatus !== b.stockStatus) {
+            if (a.stockStatus === 'in_stock') return -1;
+            if (b.stockStatus === 'in_stock') return 1;
+          }
+          return b.rating - a.rating || a.name.localeCompare(b.name);
+      }
+    });
+
+    return filtered;
+  }, []);
+
+  // Memoized filtered products for performance
+  const filteredProducts = useMemo(() => 
+    applyFilters(productsState.products, filtersState),
+    [productsState.products, filtersState, applyFilters]
+  );
+
+  // Professional load products function with retry logic
+  const loadProducts = useCallback(async (refresh = false) => {
+    if (!isMountedRef.current) return;
 
     try {
-      const filters: ProductFilter = {};
-      
-      if (searchQuery) {
-        filters.search = searchQuery;
-      }
-      
-      if (selectedCategory !== 'All') {
-        filters.category = selectedCategory;
-      }
-      
-      if (priceRange.min) {
-        filters.minPrice = parseFloat(priceRange.min);
-      }
-      
-      if (priceRange.max) {
-        filters.maxPrice = parseFloat(priceRange.max);
+      if (refresh) {
+        setProductsState(prev => ({ ...prev, isRefreshing: true, error: null }));
+      } else {
+        setProductsState(prev => ({ ...prev, isLoading: true, error: null }));
       }
 
-      try {
-        const allProducts = await ProductService.getAllProducts(filters);
-        setProducts(allProducts);
-      } catch (apiError) {
-        console.warn('API not available, using mock data:', apiError);
-        // Use mock data as fallback
-        let filteredMockProducts = [...PRODUCTS];
-        
-        // Apply filters to mock data
-        if (filters.search) {
-          filteredMockProducts = filteredMockProducts.filter(product =>
-            product.name.toLowerCase().includes(filters.search!.toLowerCase()) ||
-            product.description.toLowerCase().includes(filters.search!.toLowerCase())
-          );
-        }
-        
-        if (filters.category) {
-          filteredMockProducts = filteredMockProducts.filter(product =>
-            product.category === filters.category
-          );
-        }
-        
-        if (filters.minPrice) {
-          filteredMockProducts = filteredMockProducts.filter(product =>
-            (product.discountedPrice || product.price) >= filters.minPrice!
-          );
-        }
-        
-        if (filters.maxPrice) {
-          filteredMockProducts = filteredMockProducts.filter(product =>
-            (product.discountedPrice || product.price) <= filters.maxPrice!
-          );
-        }
-        
-        setProducts(filteredMockProducts);
+      const filters: ProductFilter = {
+        limit: 20,
+        offset: refresh ? 0 : (productsState.page - 1) * 20,
+      };
+
+      // Add city filter if available
+      if (params.city) {
+        filters.city = params.city as string;
       }
-    } catch (error: any) {
-      console.error('Error loading products:', error);
-      // Use mock data as final fallback
-      setProducts(PRODUCTS);
+
+      const result = await ProductService.getAllProducts(filters);
       
-      if (showRefreshing) {
-        // Don't show alert on refresh, just use mock data
-        console.log('Using offline data');
-      } else {
+      if (!isMountedRef.current) return;
+
+      setProductsState(prev => ({
+        ...prev,
+        products: refresh ? result.products : [...prev.products, ...result.products],
+        isLoading: false,
+        isRefreshing: false,
+        hasMore: result.hasMore,
+        page: refresh ? 2 : prev.page + 1,
+        error: null,
+      }));
+
+    } catch (error: any) {
+      if (!isMountedRef.current) return;
+
+      console.error('Error loading products:', error);
+      setProductsState(prev => ({
+        ...prev,
+        isLoading: false,
+        isRefreshing: false,
+        error: error.message || 'Failed to load products',
+      }));
+
+      if (!refresh) {
         Alert.alert(
-          'Offline Mode',
-          'Using offline data. Some features may be limited.',
-          [{ text: 'OK' }]
+          'Connection Error',
+          'Unable to load products. Please check your internet connection and try again.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Retry', onPress: () => loadProducts(true) }
+          ]
         );
       }
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
     }
-  }, [searchQuery, selectedCategory, priceRange]);
+  }, [params.city, productsState.page]);
 
-  useEffect(() => {
-    loadProducts();
-  }, [loadProducts]);
-
-  useEffect(() => {
-    // Apply sorting to products
-    let sorted = [...products];
+  // Debounced search handler
+  const handleSearch = useCallback((query: string) => {
+    setFiltersState(prev => ({ ...prev, searchQuery: query }));
     
-    switch (selectedSort) {
-      case 'price_asc':
-        sorted.sort((a, b) => (a.discountedPrice || a.price) - (b.discountedPrice || b.price));
-        break;
-      case 'price_desc':
-        sorted.sort((a, b) => (b.discountedPrice || b.price) - (a.discountedPrice || a.price));
-        break;
-      case 'name_asc':
-        sorted.sort((a, b) => a.name.localeCompare(b.name));
-        break;
-      case 'name_desc':
-        sorted.sort((a, b) => b.name.localeCompare(a.name));
-        break;
-      case 'newest':
-        sorted.sort((a, b) => b.id - a.id);
-        break;
-      default:
-        // Keep original order for relevance
-        break;
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
     }
+
+    searchTimeoutRef.current = setTimeout(() => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }, SEARCH_DEBOUNCE_MS);
+  }, []);
+
+  // Filter handlers with haptic feedback
+  const handleCategorySelect = useCallback((category: CategoryValue) => {
+    setFiltersState(prev => ({ ...prev, selectedCategory: category }));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, []);
+
+  const handleSortSelect = useCallback((sort: SortValue) => {
+    setFiltersState(prev => ({ ...prev, selectedSort: sort }));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, []);
+
+  const handlePriceRangeSelect = useCallback((range: { min?: number; max?: number }) => {
+    setFiltersState(prev => ({ ...prev, priceRange: range }));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, []);
+
+  const toggleFilters = useCallback(() => {
+    const toValue = filtersState.showFilters ? 0 : 1;
+    setFiltersState(prev => ({ ...prev, showFilters: !prev.showFilters }));
     
-    setFilteredProducts(sorted);
-  }, [products, selectedSort]);
+    Animated.spring(filterAnimationRef, {
+      toValue,
+      useNativeDriver: false,
+      tension: 100,
+      friction: 8,
+    }).start();
+    
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  }, [filtersState.showFilters, filterAnimationRef]);
+
+  const clearFilters = useCallback(() => {
+    setFiltersState(prev => ({
+      ...prev,
+      searchQuery: '',
+      selectedCategory: 'All',
+      selectedSort: 'relevance',
+      priceRange: { min: undefined, max: undefined },
+      inStockOnly: false,
+    }));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  }, []);
 
   const handleRefresh = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     loadProducts(true);
   }, [loadProducts]);
 
-  const handleSearch = () => {
-    if (searchQuery.trim()) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      loadProducts();
+  const handleLoadMore = useCallback(() => {
+    if (!productsState.isLoading && productsState.hasMore) {
+      loadProducts(false);
     }
-  };
+  }, [productsState.isLoading, productsState.hasMore, loadProducts]);
 
-  const handleCategorySelect = (category: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelectedCategory(category);
-  };
+  // Effects
+  useEffect(() => {
+    loadProducts(true);
+  }, []);
 
-  const handleSortSelect = (sortValue: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelectedSort(sortValue);
-  };
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, []);
 
-  const clearFilters = () => {
-    setSearchQuery('');
-    setSelectedCategory('All');
-    setSelectedSort('relevance');
-    setPriceRange({ min: '', max: '' });
-    setShowFilters(false);
-  };
-
-  const applyFilters = () => {
-    setShowFilters(false);
-    loadProducts();
-  };
-
-  const renderProductItem = ({ item, index }: { item: Product; index: number }) => (
-    <View style={[styles.productWrapper, index % 2 === 1 && styles.productWrapperRight]}>
-      <ProductCard product={item} />
+  // Optimized render functions
+  const renderProductItem = useCallback(({ item, index }: { item: Product; index: number }) => (
+    <View style={[styles.productItem, { width: ITEM_WIDTH }]}>
+      <ProductCard 
+        product={item} 
+        testID={`product-card-${item.id}`}
+        accessibilityLabel={`Product: ${item.name}, Price: ₹${item.discountedPrice || item.price}`}
+      />
     </View>
-  );
+  ), []);
 
-  const renderCategoryItem = ({ item }: { item: string }) => (
+  const renderCategoryItem = useCallback(({ item }: { item: CategoryValue }) => (
     <TouchableOpacity
       style={[
-        styles.categoryChip,
-        selectedCategory === item && { backgroundColor: colors.tint },
-        { borderColor: colors.border }
+        styles.categoryItem,
+        filtersState.selectedCategory === item && { 
+          backgroundColor: colors.tint,
+          borderColor: colors.tint,
+        }
       ]}
       onPress={() => handleCategorySelect(item)}
+      accessibilityRole="button"
+      accessibilityState={{ selected: filtersState.selectedCategory === item }}
     >
       <ThemedText
         style={[
           styles.categoryText,
-          selectedCategory === item && { color: '#FFFFFF' }
+          filtersState.selectedCategory === item && { color: '#FFFFFF', fontWeight: '600' }
         ]}
       >
         {item}
       </ThemedText>
     </TouchableOpacity>
-  );
+  ), [filtersState.selectedCategory, colors.tint, handleCategorySelect]);
 
-  const renderSortItem = ({ item }: { item: typeof SORT_OPTIONS[0] }) => (
+  const renderSortItem = useCallback(({ item }: { item: typeof SORT_OPTIONS[number] }) => (
     <TouchableOpacity
       style={[
         styles.sortItem,
-        selectedSort === item.value && { backgroundColor: colors.tint + '20' }
+        filtersState.selectedSort === item.value && { backgroundColor: colors.tint + '20' }
       ]}
       onPress={() => handleSortSelect(item.value)}
+      accessibilityRole="button"
+      accessibilityState={{ selected: filtersState.selectedSort === item.value }}
     >
       <ThemedText
         style={[
           styles.sortText,
-          selectedSort === item.value && { color: colors.tint, fontWeight: '600' }
+          filtersState.selectedSort === item.value && { color: colors.tint, fontWeight: '600' }
         ]}
       >
         {item.label}
       </ThemedText>
-      {selectedSort === item.value && (
+      {filtersState.selectedSort === item.value && (
         <Ionicons name="checkmark" size={20} color={colors.tint} />
       )}
     </TouchableOpacity>
-  );
+  ), [filtersState.selectedSort, colors.tint, handleSortSelect]);
+
+  const renderPriceRangeItem = useCallback(({ item }: { item: typeof PRICE_RANGES[number] }) => {
+    const isSelected = filtersState.priceRange.min === item.min && filtersState.priceRange.max === item.max;
+    
+    return (
+      <TouchableOpacity
+        style={[
+          styles.priceRangeItem,
+          isSelected && { backgroundColor: colors.tint + '20' }
+        ]}
+        onPress={() => handlePriceRangeSelect({ min: item.min, max: item.max })}
+        accessibilityRole="button"
+        accessibilityState={{ selected: isSelected }}
+      >
+        <ThemedText
+          style={[
+            styles.priceRangeText,
+            isSelected && { color: colors.tint, fontWeight: '600' }
+          ]}
+        >
+          {item.label}
+        </ThemedText>
+        {isSelected && (
+          <Ionicons name="checkmark" size={20} color={colors.tint} />
+        )}
+      </TouchableOpacity>
+    );
+  }, [filtersState.priceRange, colors.tint, handlePriceRangeSelect]);
+
+  const renderEmptyState = useCallback(() => (
+    <EmptyState
+      icon={productsState.error ? "alert-circle-outline" : "search-outline"}
+      title={productsState.error ? 'Something went wrong' : 'No products found'}
+      description={
+        productsState.error 
+          ? productsState.error
+          : filtersState.searchQuery 
+            ? `No products match "${filtersState.searchQuery}"`
+            : 'No products available at the moment'
+      }
+      actionText={productsState.error ? 'Try Again' : 'Clear Filters'}
+      onAction={() => productsState.error ? loadProducts(true) : clearFilters()}
+      fullScreen={false}
+    />
+  ), [productsState.error, filtersState.searchQuery, loadProducts, clearFilters]);
+
+  const renderListFooter = useCallback(() => {
+    if (!productsState.hasMore) return null;
+    
+    return (
+      <View style={styles.loadMoreContainer}>
+        <ActivityIndicator size="small" color={colors.tint} />
+        <ThemedText style={[styles.loadMoreText, { color: colors.tabIconDefault }]}>
+          Loading more products...
+        </ThemedText>
+      </View>
+    );
+  }, [productsState.hasMore, colors]);
 
   return (
     <ThemedView style={styles.container}>
       <Stack.Screen 
-        options={{ 
-          title: 'Products',
-          headerRight: () => (
-            <TouchableOpacity 
-              style={styles.filterButton}
-              onPress={() => setShowFilters(!showFilters)}
-            >
-              <Ionicons 
-                name={showFilters ? "close" : "options-outline"} 
-                size={24} 
-                color={colors.text} 
-              />
-            </TouchableOpacity>
-          )
+        options={{
+          title: params.city ? `Products in ${params.city}` : 'Products',
+          headerShown: true,
         }} 
       />
 
-      {/* Search Bar */}
+      {/* Enhanced Search Bar */}
       <View style={[styles.searchContainer, { backgroundColor: colors.cardBackground }]}>
-        <Ionicons name="search" size={20} color={colors.tabIconDefault} />
-        <TextInput
-          style={[styles.searchInput, { color: colors.text }]}
-          placeholder="Search products..."
-          placeholderTextColor={colors.tabIconDefault}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          onSubmitEditing={handleSearch}
-          returnKeyType="search"
-        />
-        {searchQuery ? (
-          <TouchableOpacity onPress={() => setSearchQuery('')}>
-            <Ionicons name="close-circle" size={20} color={colors.tabIconDefault} />
-          </TouchableOpacity>
-        ) : null}
+        <View style={[styles.searchInputContainer, { borderColor: colors.border }]}>
+          <Ionicons name="search" size={20} color={colors.tabIconDefault} />
+          <TextInput
+            style={[styles.searchInput, { color: colors.text }]}
+            placeholder="Search products..."
+            placeholderTextColor={colors.tabIconDefault}
+            value={filtersState.searchQuery}
+            onChangeText={handleSearch}
+            returnKeyType="search"
+            accessibilityLabel="Search products"
+            accessibilityHint="Enter product name or category to search"
+          />
+          {filtersState.searchQuery.length > 0 && (
+            <TouchableOpacity
+              onPress={() => handleSearch('')}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+            >
+              <Ionicons name="close-circle" size={20} color={colors.tabIconDefault} />
+            </TouchableOpacity>
+          )}
+        </View>
+        
+        <TouchableOpacity
+          style={[styles.filterButton, { backgroundColor: colors.tint }]}
+          onPress={toggleFilters}
+          accessibilityRole="button"
+          accessibilityLabel="Toggle filters"
+          accessibilityState={{ expanded: filtersState.showFilters }}
+        >
+          <Ionicons name="options" size={20} color="#FFFFFF" />
+        </TouchableOpacity>
       </View>
 
-      {/* Filters Panel */}
-      {showFilters && (
-        <View style={[styles.filtersPanel, { backgroundColor: colors.cardBackground }]}>
-          {/* Categories */}
-          <View style={styles.filterSection}>
-            <ThemedText style={styles.filterTitle}>Categories</ThemedText>
-            <FlatList
-              data={CATEGORIES}
-              renderItem={renderCategoryItem}
-              keyExtractor={(item) => item}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.categoriesList}
-            />
-          </View>
+      {/* Categories Horizontal Scroll */}
+      <View style={styles.categoriesContainer}>
+        <FlatList
+          data={CATEGORIES}
+          renderItem={renderCategoryItem}
+          keyExtractor={(item) => item}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.categoriesList}
+          accessibilityRole="tablist"
+        />
+      </View>
 
-          {/* Price Range */}
-          <View style={styles.filterSection}>
-            <ThemedText style={styles.filterTitle}>Price Range</ThemedText>
-            <View style={styles.priceRangeContainer}>
-              <TextInput
-                style={[styles.priceInput, { backgroundColor: colors.background, color: colors.text }]}
-                placeholder="Min"
-                placeholderTextColor={colors.tabIconDefault}
-                value={priceRange.min}
-                onChangeText={(text) => setPriceRange({ ...priceRange, min: text })}
-                keyboardType="numeric"
-              />
-              <ThemedText style={styles.priceSeparator}>to</ThemedText>
-              <TextInput
-                style={[styles.priceInput, { backgroundColor: colors.background, color: colors.text }]}
-                placeholder="Max"
-                placeholderTextColor={colors.tabIconDefault}
-                value={priceRange.max}
-                onChangeText={(text) => setPriceRange({ ...priceRange, max: text })}
-                keyboardType="numeric"
+      {/* Animated Filters Panel */}
+      <Animated.View
+        style={[
+          styles.filtersPanel,
+          {
+            backgroundColor: colors.cardBackground,
+            maxHeight: filterAnimationRef.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0, 400],
+            }),
+            opacity: filterAnimationRef,
+          }
+        ]}
+      >
+        {filtersState.showFilters && (
+          <ScrollView style={styles.filtersContent} showsVerticalScrollIndicator={false}>
+            {/* Sort Options */}
+            <View style={styles.filterSection}>
+              <ThemedText style={[styles.filterTitle, { color: colors.text }]}>Sort By</ThemedText>
+              <FlatList
+                data={SORT_OPTIONS}
+                renderItem={renderSortItem}
+                keyExtractor={(item) => item.value}
+                scrollEnabled={false}
               />
             </View>
-          </View>
 
-          {/* Sort Options */}
-          <View style={styles.filterSection}>
-            <ThemedText style={styles.filterTitle}>Sort By</ThemedText>
-            <FlatList
-              data={SORT_OPTIONS}
-              renderItem={renderSortItem}
-              keyExtractor={(item) => item.value}
-              scrollEnabled={false}
-            />
-          </View>
+            {/* Price Range */}
+            <View style={styles.filterSection}>
+              <ThemedText style={[styles.filterTitle, { color: colors.text }]}>Price Range</ThemedText>
+              <FlatList
+                data={PRICE_RANGES}
+                renderItem={renderPriceRangeItem}
+                keyExtractor={(item) => item.label}
+                scrollEnabled={false}
+              />
+            </View>
 
-          {/* Filter Actions */}
-          <View style={styles.filterActions}>
-            <TouchableOpacity
-              style={[styles.filterActionButton, { backgroundColor: colors.border }]}
-              onPress={clearFilters}
-            >
-              <ThemedText style={styles.filterActionText}>Clear</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.filterActionButton, { backgroundColor: colors.tint }]}
-              onPress={applyFilters}
-            >
-              <ThemedText style={[styles.filterActionText, { color: '#FFFFFF' }]}>Apply</ThemedText>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
+            {/* Stock Filter */}
+            <View style={styles.filterSection}>
+              <TouchableOpacity
+                style={styles.stockFilterContainer}
+                onPress={() => setFiltersState(prev => ({ ...prev, inStockOnly: !prev.inStockOnly }))}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: filtersState.inStockOnly }}
+              >
+                <Ionicons 
+                  name={filtersState.inStockOnly ? "checkbox" : "checkbox-outline"} 
+                  size={24} 
+                  color={colors.tint} 
+                />
+                <ThemedText style={[styles.stockFilterText, { color: colors.text }]}>
+                  In Stock Only
+                </ThemedText>
+              </TouchableOpacity>
+            </View>
+
+            {/* Filter Actions */}
+            <View style={styles.filterActions}>
+              <TouchableOpacity
+                style={[styles.filterActionButton, { backgroundColor: colors.border }]}
+                onPress={clearFilters}
+                accessibilityRole="button"
+                accessibilityLabel="Clear all filters"
+              >
+                <ThemedText style={[styles.filterActionText, { color: colors.text }]}>Clear</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.filterActionButton, { backgroundColor: colors.tint }]}
+                onPress={toggleFilters}
+                accessibilityRole="button"
+                accessibilityLabel="Apply filters"
+              >
+                <ThemedText style={[styles.filterActionText, { color: '#FFFFFF' }]}>Apply</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        )}
+      </Animated.View>
 
       {/* Results Info */}
       <View style={styles.resultsInfo}>
-        <ThemedText style={styles.resultsText}>
+        <ThemedText style={[styles.resultsText, { color: colors.text }]}>
           {filteredProducts.length} product{filteredProducts.length !== 1 ? 's' : ''} found
         </ThemedText>
       </View>
 
-      {/* Products List */}
-      {isLoading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.tint} />
-          <ThemedText style={styles.loadingText}>Loading products...</ThemedText>
-        </View>
+      {/* Optimized Products List */}
+      {productsState.isLoading && !productsState.isRefreshing ? (
+        <LoadingSpinner 
+          size="large" 
+          text="Loading products..." 
+          color={colors.tint}
+          fullScreen={true}
+        />
       ) : (
         <FlatList
+          ref={flatListRef}
           data={filteredProducts}
           renderItem={renderProductItem}
           keyExtractor={(item) => item.id.toString()}
@@ -469,105 +611,103 @@ export default function ProductsScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
-              refreshing={isRefreshing}
+              refreshing={productsState.isRefreshing}
               onRefresh={handleRefresh}
               colors={[colors.tint]}
               tintColor={colors.tint}
             />
           }
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Ionicons name="search-outline" size={80} color={colors.tabIconDefault} />
-              <ThemedText style={styles.emptyText}>No products found</ThemedText>
-              <ThemedText style={styles.emptySubtext}>
-                Try adjusting your search or filters
-              </ThemedText>
-              <TouchableOpacity
-                style={[styles.clearFiltersButton, { backgroundColor: colors.tint }]}
-                onPress={clearFilters}
-              >
-                <ThemedText style={styles.clearFiltersText}>Clear Filters</ThemedText>
-              </TouchableOpacity>
-            </View>
-          }
+          ListEmptyComponent={renderEmptyState}
+          ListFooterComponent={renderListFooter}
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={LOAD_MORE_THRESHOLD}
+          removeClippedSubviews={Platform.OS === 'android'}
+          maxToRenderPerBatch={10}
+          windowSize={10}
+          initialNumToRender={6}
+          getItemLayout={(data, index) => ({
+            length: 280,
+            offset: 280 * Math.floor(index / 2),
+            index,
+          })}
         />
       )}
     </ThemedView>
   );
 }
 
+// Professional Styles with proper spacing and accessibility
 const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  filterButton: {
-    padding: 8,
-  },
   searchContainer: {
+    flexDirection: 'row',
+    padding: 16,
+    gap: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  searchInputContainer: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    margin: 16,
     borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    borderWidth: 1,
+    gap: 12,
   },
   searchInput: {
     flex: 1,
-    marginLeft: 8,
     fontSize: 16,
+    fontWeight: '400',
   },
-  filtersPanel: {
-    padding: 16,
-    marginHorizontal: 16,
-    marginBottom: 16,
+  filterButton: {
+    width: 48,
+    height: 48,
     borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  filterSection: {
-    marginBottom: 20,
-  },
-  filterTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 12,
+  categoriesContainer: {
+    paddingVertical: 8,
   },
   categoriesList: {
-    paddingVertical: 4,
+    paddingHorizontal: 16,
+    gap: 8,
   },
-  categoryChip: {
+  categoryItem: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
-    marginRight: 8,
+    borderColor: '#E0E0E0',
+    backgroundColor: '#FFFFFF',
+    minHeight: 44, // Accessibility minimum touch target
   },
   categoryText: {
     fontSize: 14,
     fontWeight: '500',
   },
-  priceRangeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  filtersPanel: {
+    overflow: 'hidden',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
   },
-  priceInput: {
-    flex: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    fontSize: 16,
+  filtersContent: {
+    padding: 16,
   },
-  priceSeparator: {
-    marginHorizontal: 12,
-    fontSize: 16,
+  filterSection: {
+    marginBottom: 24,
+  },
+  filterTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 12,
   },
   sortItem: {
     flexDirection: 'row',
@@ -576,14 +716,40 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 8,
-    marginBottom: 4,
+    marginBottom: 8,
+    minHeight: 44, // Accessibility
   },
   sortText: {
     fontSize: 16,
+    fontWeight: '400',
+  },
+  priceRangeItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginBottom: 8,
+    minHeight: 44, // Accessibility
+  },
+  priceRangeText: {
+    fontSize: 16,
+    fontWeight: '400',
+  },
+  stockFilterContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    minHeight: 44, // Accessibility
+  },
+  stockFilterText: {
+    fontSize: 16,
+    fontWeight: '500',
   },
   filterActions: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 12,
     marginTop: 8,
   },
   filterActionButton: {
@@ -591,7 +757,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 8,
     alignItems: 'center',
-    marginHorizontal: 4,
+    minHeight: 44, // Accessibility
   },
   filterActionText: {
     fontSize: 16,
@@ -599,59 +765,76 @@ const styles = StyleSheet.create({
   },
   resultsInfo: {
     paddingHorizontal: 16,
-    paddingBottom: 8,
+    paddingVertical: 8,
   },
   resultsText: {
     fontSize: 14,
-    opacity: 0.7,
+    fontWeight: '500',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    gap: 16,
   },
   loadingText: {
-    marginTop: 16,
     fontSize: 16,
-    opacity: 0.7,
+    fontWeight: '500',
   },
   productsList: {
     padding: 16,
+    gap: 16,
   },
-  productWrapper: {
-    flex: 1,
+  productItem: {
     marginBottom: 16,
   },
-  productWrapperRight: {
-    marginLeft: 8,
-  },
-  emptyContainer: {
-    alignItems: 'center',
+  emptyState: {
+    flex: 1,
     justifyContent: 'center',
-    paddingVertical: 60,
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingVertical: 64,
   },
-  emptyText: {
-    fontSize: 18,
+  emptyStateTitle: {
+    fontSize: 20,
     fontWeight: '600',
     marginTop: 16,
+    marginBottom: 8,
     textAlign: 'center',
   },
-  emptySubtext: {
-    fontSize: 14,
-    opacity: 0.7,
-    marginTop: 8,
+  emptyStateText: {
+    fontSize: 16,
     textAlign: 'center',
     marginBottom: 24,
+    lineHeight: 24,
   },
-  clearFiltersButton: {
+  retryButton: {
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
+    minHeight: 44, // Accessibility
   },
-  clearFiltersText: {
+  retryButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
+  loadMoreContainer: {
+    paddingVertical: 20,
+    alignItems: 'center',
+    gap: 8,
+  },
+  loadMoreText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
 });
+
+// Export with Error Boundary for production-ready error handling
+export default function ProductsScreenWithErrorBoundary() {
+  return (
+    <ErrorBoundary>
+      <ProductsScreen />
+    </ErrorBoundary>
+  );
+}

@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { User } from '../types';
 import api from './api';
 
@@ -29,10 +30,17 @@ class AuthService {
 
   private async loadBiometricPreference() {
     try {
+      // Skip AsyncStorage operations on web during SSR
+      if (Platform.OS === 'web' && typeof window === 'undefined') {
+        this.biometricEnabled = false;
+        return;
+      }
+      
       const value = await AsyncStorage.getItem('biometricEnabled');
       this.biometricEnabled = value === 'true';
     } catch (error) {
       console.error('Error loading biometric preference:', error);
+      this.biometricEnabled = false;
     }
   }
 
@@ -105,6 +113,12 @@ class AuthService {
 
   async enableBiometric(): Promise<void> {
     try {
+      // Skip AsyncStorage operations on web during SSR
+      if (Platform.OS === 'web' && typeof window === 'undefined') {
+        this.biometricEnabled = true;
+        return;
+      }
+      
       await AsyncStorage.setItem('biometricEnabled', 'true');
       this.biometricEnabled = true;
     } catch (error) {
@@ -114,6 +128,12 @@ class AuthService {
 
   async disableBiometric(): Promise<void> {
     try {
+      // Skip AsyncStorage operations on web during SSR
+      if (Platform.OS === 'web' && typeof window === 'undefined') {
+        this.biometricEnabled = false;
+        return;
+      }
+      
       await AsyncStorage.setItem('biometricEnabled', 'false');
       this.biometricEnabled = false;
     } catch (error) {

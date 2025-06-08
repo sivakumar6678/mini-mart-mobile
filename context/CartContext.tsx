@@ -1,20 +1,21 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import cartService from '../services/cart.service';
-import { Cart, CartItem } from '../types';
+import { Product } from '../services/product.service';
+import { Cart } from '../types';
 
 interface CartContextType {
   cart: Cart | null;
   isLoading: boolean;
   error: string | null;
-  addToCart: (productId: string, quantity: number) => Promise<void>;
-  updateCartItem: (itemId: string, quantity: number) => Promise<void>;
-  removeFromCart: (itemId: string) => Promise<void>;
+  addToCart: (product: Product, quantity: number) => Promise<void>;
+  updateCartItem: (productId: number, quantity: number) => Promise<void>;
+  removeFromCart: (productId: number) => Promise<void>;
   clearCart: () => Promise<void>;
-  getCartTotal: () => Promise<number>;
-  getCartItemCount: () => Promise<number>;
+  getCartTotal: () => number;
+  getCartItemCount: () => number;
   validateCart: () => Promise<{
     isValid: boolean;
-    invalidItems: CartItem[];
+    errors: string[];
   }>;
   clearError: () => void;
 }
@@ -42,10 +43,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const addToCart = async (productId: string, quantity: number) => {
+  const addToCart = async (product: Product, quantity: number) => {
     try {
       setIsLoading(true);
-      const updatedCart = await cartService.addToCart(productId, quantity);
+      const updatedCart = await cartService.addToCart(product, quantity);
       setCart(updatedCart);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to add item to cart');
@@ -55,10 +56,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const updateCartItem = async (itemId: string, quantity: number) => {
+  const updateCartItem = async (productId: number, quantity: number) => {
     try {
       setIsLoading(true);
-      const updatedCart = await cartService.updateCartItem(itemId, quantity);
+      const updatedCart = await cartService.updateCartItemQuantity(productId, quantity);
       setCart(updatedCart);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to update cart item');
@@ -68,10 +69,10 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const removeFromCart = async (itemId: string) => {
+  const removeFromCart = async (productId: number) => {
     try {
       setIsLoading(true);
-      const updatedCart = await cartService.removeFromCart(itemId);
+      const updatedCart = await cartService.removeFromCart(productId);
       setCart(updatedCart);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to remove item from cart');
@@ -94,22 +95,14 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const getCartTotal = async () => {
-    try {
-      return await cartService.getCartTotal();
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to get cart total');
-      throw error;
-    }
+  const getCartTotal = () => {
+    if (!cart) return 0;
+    return cartService.calculateTotal(cart.items);
   };
 
-  const getCartItemCount = async () => {
-    try {
-      return await cartService.getCartItemCount();
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to get cart item count');
-      throw error;
-    }
+  const getCartItemCount = () => {
+    if (!cart) return 0;
+    return cart.items.reduce((total, item) => total + item.quantity, 0);
   };
 
   const validateCart = async () => {

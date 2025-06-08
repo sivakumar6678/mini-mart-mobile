@@ -1,6 +1,7 @@
-import { Product, Review } from '../types';
+import { Review } from '../types';
 import api from './api';
 
+// Unified Product interface with proper typing
 export interface Product {
   id: number;
   name: string;
@@ -11,8 +12,17 @@ export interface Product {
   category: string;
   images: string[];
   shopId: number;
-  rating?: number;
+  rating: number;
   stockStatus: 'in_stock' | 'low_stock' | 'out_of_stock';
+  // Backend compatibility fields (optional)
+  image_url?: string;
+  shop_id?: number;
+  // Additional fields for better UX
+  brand?: string;
+  unit?: string;
+  featured?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ProductFilter {
@@ -24,8 +34,11 @@ export interface ProductFilter {
   search?: string;
   limit?: number;
   offset?: number;
-  sortBy?: 'price' | 'name' | 'rating';
+  sortBy?: 'price' | 'name' | 'rating' | 'newest' | 'relevance';
   sortOrder?: 'asc' | 'desc';
+  featured?: boolean;
+  inStock?: boolean;
+  brand?: string;
 }
 
 export interface ProductResponse {
@@ -103,6 +116,51 @@ const MOCK_PRODUCTS: Product[] = [
 
 // TODO: Replace with actual API endpoints
 const API_URL = 'https://api.minimart.com';
+
+// Enhanced product normalization with validation and fallbacks
+const normalizeProduct = (product: any): Product => {
+  // Validate required fields
+  if (!product.id || !product.name || typeof product.price !== 'number') {
+    throw new Error('Invalid product data: missing required fields');
+  }
+
+  // Determine stock status with proper logic
+  const getStockStatus = (quantity: number): Product['stockStatus'] => {
+    if (quantity <= 0) return 'out_of_stock';
+    if (quantity <= 10) return 'low_stock';
+    return 'in_stock';
+  };
+
+  // Normalize images with fallback
+  const normalizeImages = (images?: string[], imageUrl?: string): string[] => {
+    if (images && Array.isArray(images) && images.length > 0) {
+      return images.filter(img => typeof img === 'string' && img.trim() !== '');
+    }
+    if (imageUrl && typeof imageUrl === 'string' && imageUrl.trim() !== '') {
+      return [imageUrl];
+    }
+    return ['https://via.placeholder.com/300x300?text=No+Image'];
+  };
+
+  return {
+    id: Number(product.id),
+    name: String(product.name).trim(),
+    description: String(product.description || '').trim(),
+    price: Number(product.price),
+    discountedPrice: product.discountedPrice ? Number(product.discountedPrice) : undefined,
+    quantity: Number(product.quantity || 0),
+    category: String(product.category || 'Uncategorized').trim(),
+    images: normalizeImages(product.images, product.image_url),
+    shopId: Number(product.shopId || product.shop_id || 0),
+    rating: Number(product.rating || 0),
+    stockStatus: getStockStatus(Number(product.quantity || 0)),
+    brand: product.brand ? String(product.brand).trim() : undefined,
+    unit: product.unit ? String(product.unit).trim() : undefined,
+    featured: Boolean(product.featured),
+    createdAt: product.createdAt || new Date().toISOString(),
+    updatedAt: product.updatedAt || new Date().toISOString(),
+  };
+};
 
 const productService = {
   async getProducts(params?: {
@@ -294,74 +352,57 @@ const productService = {
     }
   },
 
-  getAllProducts: async (filters?: ProductFilter): Promise<ProductResponse> => {
+  getAllProducts: async (filters?: ProductFilter, retryCount = 0): Promise<ProductResponse> => {
+    const MAX_RETRIES = 2;
+    const RETRY_DELAY = 1000;
+
     try {
       const response = await api.get('/products', { params: filters });
-      return response.data;
-    } catch (error) {
-      console.warn('API not available, using mock data:', error);
-      // Apply filters to mock data
-      let filteredProducts = [...MOCK_PRODUCTS];
       
-      if (filters?.search) {
-        filteredProducts = filteredProducts.filter(product =>
-          product.name.toLowerCase().includes(filters.search!.toLowerCase()) ||
-          product.description.toLowerCase().includes(filters.search!.toLowerCase())
-        );
-      }
-      
-      if (filters?.category) {
-        filteredProducts = filteredProducts.filter(product =>
-          product.category === filters.category
-        );
-      }
-      
-      if (filters?.minPrice) {
-        filteredProducts = filteredProducts.filter(product =>
-          (product.discountedPrice || product.price) >= filters.minPrice!
-        );
-      }
-      
-      if (filters?.maxPrice) {
-        filteredProducts = filteredProducts.filter(product =>
-          (product.discountedPrice || product.price) <= filters.maxPrice!
-        );
-      }
-      
-      if (filters?.shopId) {
-        filteredProducts = filteredProducts.filter(product =>
-          product.shopId === filters.shopId
-        );
+      // Handle different response formats
+      let products: any[] = [];
+      if (Array.isArray(response.data)) {
+        products = response.data;
+      } else if (response.data?.products && Array.isArray(response.data.products)) {
+        products = response.data.products;
+      } else if (response.data?.data && Array.isArray(response.data.data)) {
+        products = response.data.data;
       }
 
-      // Apply sorting
-      if (filters?.sortBy) {
-        filteredProducts.sort((a, b) => {
-          let comparison = 0;
-          switch (filters.sortBy) {
-            case 'price':
-              comparison = (a.discountedPrice || a.price) - (b.discountedPrice || b.price);
-              break;
-            case 'name':
-              comparison = a.name.localeCompare(b.name);
-              break;
-            case 'rating':
-              comparison = (b.rating || 0) - (a.rating || 0);
-              break;
-          }
-          return filters.sortOrder === 'desc' ? -comparison : comparison;
-        });
+      // Normalize products with error handling
+      const normalizedProducts: Product[] = [];
+      for (const product of products) {
+        try {
+          normalizedProducts.push(normalizeProduct(product));
+        } catch (normalizationError) {
+          console.warn('Failed to normalize product:', product, normalizationError);
+          // Skip invalid products instead of failing the entire request
+        }
       }
       
-      // Apply pagination
-      const limit = filters?.limit || 10;
-      const offset = filters?.offset || 0;
-      const paginatedProducts = filteredProducts.slice(offset, offset + limit);
-      
       return {
-        products: paginatedProducts,
-        total: filteredProducts.length,
-        hasMore: offset + limit < filteredProducts.length
+        products: normalizedProducts,
+        total: response.data?.total || normalizedProducts.length,
+        hasMore: response.data?.hasMore || false
+      };
+    } catch (error: any) {
+      console.warn(`API error (attempt ${retryCount + 1}):`, error?.response?.status, error?.message);
+      
+      // Retry logic for network errors
+      if (retryCount < MAX_RETRIES && (
+        error.code === 'NETWORK_ERROR' || 
+        error.code === 'ECONNABORTED' ||
+        error?.response?.status >= 500
+      )) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * (retryCount + 1)));
+        return productService.getAllProducts(filters, retryCount + 1);
+      }
+      
+      // Return empty result for API errors
+      return {
+        products: [],
+        total: 0,
+        hasMore: false
       };
     }
   },
@@ -369,13 +410,20 @@ const productService = {
   getProductsByShop: async (shopId: number, filters?: Omit<ProductFilter, 'shopId'>): Promise<ProductResponse> => {
     try {
       const response = await api.get(`/products/shop/${shopId}`, { params: filters });
-      return response.data;
-    } catch (error) {
-      console.warn('API not available, using mock data:', error);
-      const products = MOCK_PRODUCTS.filter(product => product.shopId === shopId);
+      const normalizedProducts = Array.isArray(response.data) 
+        ? response.data.map(normalizeProduct)
+        : response.data.products?.map(normalizeProduct) || [];
+      
       return {
-        products,
-        total: products.length,
+        products: normalizedProducts,
+        total: response.data.total || normalizedProducts.length,
+        hasMore: response.data.hasMore || false
+      };
+    } catch (error: any) {
+      console.warn('API error:', error?.response?.status, error?.message);
+      return {
+        products: [],
+        total: 0,
         hasMore: false
       };
     }
@@ -384,13 +432,20 @@ const productService = {
   getProductsByCategory: async (category: string, filters?: Omit<ProductFilter, 'category'>): Promise<ProductResponse> => {
     try {
       const response = await api.get(`/products/category/${category}`, { params: filters });
-      return response.data;
-    } catch (error) {
-      console.warn('API not available, using mock data:', error);
-      const products = MOCK_PRODUCTS.filter(product => product.category === category);
+      const normalizedProducts = Array.isArray(response.data) 
+        ? response.data.map(normalizeProduct)
+        : response.data.products?.map(normalizeProduct) || [];
+      
       return {
-        products,
-        total: products.length,
+        products: normalizedProducts,
+        total: response.data.total || normalizedProducts.length,
+        hasMore: response.data.hasMore || false
+      };
+    } catch (error: any) {
+      console.warn('API error:', error?.response?.status, error?.message);
+      return {
+        products: [],
+        total: 0,
         hasMore: false
       };
     }
@@ -399,13 +454,20 @@ const productService = {
   getProductsByCity: async (city: string, filters?: Omit<ProductFilter, 'city'>): Promise<ProductResponse> => {
     try {
       const response = await api.get(`/products/city/${city}`, { params: filters });
-      return response.data;
-    } catch (error) {
-      console.warn('API not available, using mock data:', error);
-      // For mock data, return all products regardless of city
+      const normalizedProducts = Array.isArray(response.data) 
+        ? response.data.map(normalizeProduct)
+        : response.data.products?.map(normalizeProduct) || [];
+      
       return {
-        products: MOCK_PRODUCTS,
-        total: MOCK_PRODUCTS.length,
+        products: normalizedProducts,
+        total: response.data.total || normalizedProducts.length,
+        hasMore: response.data.hasMore || false
+      };
+    } catch (error: any) {
+      console.warn('API error:', error?.response?.status, error?.message);
+      return {
+        products: [],
+        total: 0,
         hasMore: false
       };
     }
@@ -416,16 +478,20 @@ const productService = {
       const response = await api.get(`/products/search`, { 
         params: { ...filters, q: query }
       });
-      return response.data;
-    } catch (error) {
-      console.warn('API not available, using mock data:', error);
-      const products = MOCK_PRODUCTS.filter(product =>
-        product.name.toLowerCase().includes(query.toLowerCase()) ||
-        product.description.toLowerCase().includes(query.toLowerCase())
-      );
+      const normalizedProducts = Array.isArray(response.data) 
+        ? response.data.map(normalizeProduct)
+        : response.data.products?.map(normalizeProduct) || [];
+      
       return {
-        products,
-        total: products.length,
+        products: normalizedProducts,
+        total: response.data.total || normalizedProducts.length,
+        hasMore: response.data.hasMore || false
+      };
+    } catch (error: any) {
+      console.warn('API error:', error?.response?.status, error?.message);
+      return {
+        products: [],
+        total: 0,
         hasMore: false
       };
     }

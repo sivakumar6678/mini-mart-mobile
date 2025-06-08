@@ -2,6 +2,7 @@ import React from 'react';
 import { Image, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useCart } from '../context/CartContext';
 import { Product } from '../types';
+import { shadowPresets } from '../utils/shadows';
 import { ThemedText } from './ThemedText';
 
 const DEFAULT_IMAGE = 'https://via.placeholder.com/150';
@@ -15,7 +16,21 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onPress }) =>
   const { addToCart } = useCart();
 
   const handleAddToCart = () => {
-    addToCart(product.id, 1);
+    // Convert the Product type to match the service Product type
+    const serviceProduct = {
+      id: parseInt(product.id),
+      name: product.name,
+      description: product.description,
+      price: product.price,
+      discountedPrice: undefined,
+      quantity: product.stock,
+      category: product.category,
+      images: product.images || [],
+      shopId: 1, // Default shop ID
+      rating: product.rating || 0,
+      stockStatus: product.stock > 0 ? 'in_stock' as const : 'out_of_stock' as const
+    };
+    addToCart(serviceProduct, 1);
   };
 
   return (
@@ -47,11 +62,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 8,
     margin: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    ...shadowPresets.card,
   },
   image: {
     width: '100%',

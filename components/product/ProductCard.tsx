@@ -3,19 +3,20 @@ import { useCart } from '@/context/CartContext';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { Product } from '@/services/product.service';
 import { formatCurrency } from '@/utils/formatCurrency';
+import { shadowPresets } from '@/utils/shadows';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import React, { useState } from 'react';
 import {
-  ActivityIndicator,
-  Animated,
-  Dimensions,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Animated,
+    Dimensions,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from 'react-native';
 
 interface ProductCardProps {
@@ -88,7 +89,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, horizontal = 
       >
         <View style={styles.imageContainer}>
           <Image
-            source={{ uri: product.images[0] }}
+            source={{ 
+              uri: product.images?.[0] || 
+                   (product as any).image_url || 
+                   'https://via.placeholder.com/150' 
+            }}
             style={horizontal ? styles.horizontalImage : styles.image}
             contentFit="cover"
             transition={300}
@@ -156,11 +161,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
     marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    ...shadowPresets.medium,
   },
   touchableContainer: {
     flex: 1,

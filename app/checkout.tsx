@@ -21,50 +21,14 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   StyleSheet,
-  Text,
   TouchableOpacity,
   View
 } from 'react-native';
 import { Address } from '../types';
-
-// Mock addresses
-const ADDRESSES: Address[] = [
-  {
-    id: '1',
-    userId: '1',
-    name: 'Home',
-    phone: '1234567890',
-    addressLine1: '123 Main Street, Apartment 4B',
-    addressLine2: '',
-    city: 'Mumbai',
-    state: 'Maharashtra',
-    postalCode: '400001',
-    country: 'India',
-    isDefault: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: '2',
-    userId: '1',
-    name: 'Office',
-    phone: '1234567890',
-    addressLine1: '456 Park Avenue',
-    addressLine2: '',
-    city: 'Mumbai',
-    state: 'Maharashtra',
-    postalCode: '400002',
-    country: 'India',
-    isDefault: false,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
 
 // Payment methods
 const PAYMENT_METHODS = [
@@ -88,11 +52,11 @@ interface ErrorBoundaryProps {
 class CheckoutErrorBoundary extends React.Component<ErrorBoundaryProps> {
   state = { hasError: false };
 
-  static getDerivedStateFromError(error: any) {
+  static getDerivedStateFromError(error: Error) {
     return { hasError: true };
   }
 
-  componentDidCatch(error: any, errorInfo: any) {
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     console.error('Checkout Error:', error, errorInfo);
   }
 
@@ -136,8 +100,8 @@ export function CheckoutScreen() {
   const colors = Colors[colorScheme ?? 'light'];
   const successAnimation = useRef(new Animated.Value(0)).current;
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [isSubmittingAddress, setIsSubmittingAddress] = useState(false);
+  const timeoutRef = useRef<number | null>(null);
   
   const deliveryFee = useMemo(() => 
     cart?.total ? (cart.total > 500 ? 0 : 40) : 40,
@@ -173,7 +137,7 @@ export function CheckoutScreen() {
         } else if (userAddresses.length > 0) {
           setSelectedAddress(userAddresses[0]);
         }
-      } catch (error: any) {
+      } catch (error) {
         console.error('Error loading addresses:', error);
         Alert.alert(
           'Error',
@@ -232,12 +196,12 @@ export function CheckoutScreen() {
       setIsAddingAddress(false);
       
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error adding address:', error);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert(
         'Error', 
-        error.response?.data?.message || 'Failed to add address. Please try again.'
+        error instanceof Error ? error.message : 'Failed to add address. Please try again.'
       );
     } finally {
       setIsSubmittingAddress(false);
@@ -264,11 +228,11 @@ export function CheckoutScreen() {
     try {
       // Prepare order data
       const orderItems = cart.items.map(item => ({
-        id: item.id,
-        productId: item.productId,
+        id: item.product.id.toString(),
+        productId: item.product.id.toString(),
         quantity: item.quantity,
-        price: item.price,
-        total: item.total,
+        price: item.product.price,
+        total: item.product.price * item.quantity,
       }));
 
       const orderData = {
@@ -282,8 +246,13 @@ export function CheckoutScreen() {
       
       // Process payment if not COD
       if (selectedPaymentMethod !== 'cod') {
+        const orderId = typeof order.id === 'string' ? parseInt(order.id, 10) : order.id;
+        if (isNaN(orderId)) {
+          throw new Error('Invalid order ID received');
+        }
+        
         const paymentData = {
-          orderId: parseInt(order.id),
+          orderId,
           amount: totalWithDelivery,
           paymentMethodId: selectedPaymentMethod,
           currency: 'INR',
@@ -306,7 +275,7 @@ export function CheckoutScreen() {
       
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       
-      setTimeout(() => {
+      timeoutRef.current = setTimeout(() => {
         clearCart();
         router.replace({
           pathname: '/order/confirmation',
@@ -331,24 +300,11 @@ export function CheckoutScreen() {
   useEffect(() => {
     return () => {
       successAnimation.stopAnimation();
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
     };
   }, [successAnimation]);
-
-  useEffect(() => {
-    const keyboardDidShowListener = Keyboard.addListener(
-      'keyboardDidShow',
-      () => setKeyboardVisible(true)
-    );
-    const keyboardDidHideListener = Keyboard.addListener(
-      'keyboardDidHide',
-      () => setKeyboardVisible(false)
-    );
-
-    return () => {
-      keyboardDidShowListener.remove();
-      keyboardDidHideListener.remove();
-    };
-  }, []);
 
   if (authLoading) {
     return (
@@ -460,12 +416,12 @@ export function CheckoutScreen() {
               <View style={[styles.successIconContainer, { backgroundColor: colors.tint }]}>
                 <Ionicons name="checkmark" size={40} color="#FFFFFF" />
               </View>
-              <Text style={[styles.successTitle, { color: colors.text }]}>
+              <ThemedText style={styles.successTitle}>
                 Order Placed Successfully!
-              </Text>
-              <Text style={[styles.successMessage, { color: colors.tabIconDefault }]}>
+              </ThemedText>
+              <ThemedText style={[styles.successMessage, { color: colors.tabIconDefault }]}>
                 Your order has been placed and is being processed
-              </Text>
+              </ThemedText>
             </View>
           </Animated.View>
         )}
@@ -507,6 +463,9 @@ export function CheckoutScreen() {
                 <ThemedText type="subtitle" style={styles.sectionTitle}>Order Summary</ThemedText>
               </View>
               <TouchableOpacity 
+                accessible={true}
+                accessibilityLabel="Edit cart"
+                accessibilityRole="button"
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   router.push('/cart');
@@ -519,14 +478,14 @@ export function CheckoutScreen() {
             <View style={[styles.summaryContainer, { backgroundColor: colors.cardBackground }]}>
               <View style={styles.cartItemsPreview}>
                 {cartItems.slice(0, 2).map((item) => (
-                  <View key={item.id} style={styles.cartItemPreview}>
+                  <View key={item.product.id} style={styles.cartItemPreview}>
                     <View style={styles.cartItemInfo}>
                       <ThemedText style={styles.cartItemName} numberOfLines={1}>
-                        {item.productId}
+                        {item.product.name || `Product ${item.product.id}`}
                       </ThemedText>
                       <View style={styles.cartItemDetails}>
                         <ThemedText style={styles.cartItemPrice}>
-                          {formatCurrency(item.price)}
+                          {formatCurrency(item.product.price)}
                         </ThemedText>
                         <ThemedText style={styles.cartItemQuantity}>
                           × {item.quantity}
@@ -580,6 +539,9 @@ export function CheckoutScreen() {
               
               {!isAddingAddress && addresses.length > 0 && (
                 <TouchableOpacity 
+                  accessible={true}
+                  accessibilityLabel="Add new address"
+                  accessibilityRole="button"
                   onPress={() => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     setIsAddingAddress(true);
@@ -666,8 +628,10 @@ export function CheckoutScreen() {
                     style={styles.cancelButton}
                   />
                   <Button
-                    title="Save Address"
+                    title={isSubmittingAddress ? "Saving..." : "Save Address"}
                     onPress={handleSubmit(handleAddAddress)}
+                    loading={isSubmittingAddress}
+                    disabled={isSubmittingAddress}
                     style={styles.saveButton}
                   />
                 </View>
@@ -677,6 +641,10 @@ export function CheckoutScreen() {
                 {addresses.map((address) => (
                   <TouchableOpacity
                     key={address.id}
+                    accessible={true}
+                    accessibilityLabel={`Select address: ${address.addressLine1}, ${address.city}`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: selectedAddress?.id === address.id }}
                     style={[
                       styles.addressItem,
                       { backgroundColor: colors.cardBackground },

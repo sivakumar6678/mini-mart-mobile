@@ -3,6 +3,7 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
+import { shadowPresets } from '@/utils/shadows';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, router } from 'expo-router';
 import React from 'react';
@@ -145,11 +146,7 @@ const styles = StyleSheet.create({
   contactCard: {
     borderRadius: 12,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    ...shadowPresets.medium,
   },
   contactItem: {
     flexDirection: 'row',
@@ -193,11 +190,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 12,
     marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    ...shadowPresets.medium,
   },
   quickLinkText: {
     flex: 1,

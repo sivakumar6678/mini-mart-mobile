@@ -28,7 +28,8 @@ db = SQLAlchemy(app)
 # Configure CORS with explicit settings
 CORS(app, 
      resources={r"/*": {
-         "origins": ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8081", "exp://192.168.167.73:8081"], 
+        #  "origins": ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8081" , "http://localhost:8082", "exp://192.168.167.73:8081","exp://192.168.167.73:8082"], 
+         "origins": "*",
          "allow_headers": ["Content-Type", "Authorization", "Accept", "X-Requested-With"],
          "expose_headers": ["Content-Type", "Authorization"],
          "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],

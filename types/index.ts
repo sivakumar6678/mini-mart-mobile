@@ -145,18 +145,11 @@ export interface PaymentMethod {
 }
 
 export interface Cart {
-  id: string;
-  userId: string;
   items: CartItem[];
   total: number;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface CartItem {
-  id: string;
-  productId: string;
+  product: import('../services/product.service').Product;
   quantity: number;
-  price: number;
-  total: number;
 } 
