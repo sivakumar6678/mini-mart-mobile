@@ -1,7 +1,5 @@
 import { Order, OrderItem } from '../types';
-
-// TODO: Replace with actual API endpoints
-const API_URL = 'https://api.minimart.com';
+import api from './api';
 
 const orderService = {
   async createOrder(orderData: {
@@ -10,22 +8,59 @@ const orderService = {
     paymentMethodId: string;
   }): Promise<Order> {
     try {
-      const response = await fetch(`${API_URL}/orders`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      // Convert to backend format
+      const backendOrderData = {
+        items: orderData.items.map(item => ({
+          product_id: parseInt(item.productId),
+          quantity: item.quantity
+        })),
+        address_id: parseInt(orderData.shippingAddressId),
+        payment: {
+          method: orderData.paymentMethodId,
+          // Add other payment details as needed
+        }
+      };
+
+      const response = await api.post('/orders', backendOrderData);
+      
+      // Convert backend response to our Order format
+      const backendOrder = response.data;
+      const order: Order = {
+        id: backendOrder.id.toString(),
+        userId: backendOrder.customer_id.toString(),
+        items: backendOrder.items?.map((item: any) => ({
+          id: item.id.toString(),
+          productId: item.product_id.toString(),
+          quantity: item.quantity,
+          price: item.price,
+          total: item.total
+        })) || [],
+        total: backendOrder.total_amount,
+        status: backendOrder.status || 'pending',
+        shippingAddress: {
+          id: backendOrder.address_id?.toString() || '',
+          userId: backendOrder.customer_id.toString(),
+          name: 'Shipping Address',
+          phone: '',
+          addressLine1: '',
+          city: '',
+          state: '',
+          zipCode: '',
+          country: 'India',
+          isDefault: false
         },
-        body: JSON.stringify(orderData),
-      });
+        paymentMethod: orderData.paymentMethodId,
+        createdAt: backendOrder.created_at || new Date().toISOString(),
+        updatedAt: backendOrder.updated_at || new Date().toISOString()
+      };
 
-      if (!response.ok) {
-        throw new Error('Failed to create order');
-      }
-
-      return await response.json();
-    } catch (error) {
+      return order;
+    } catch (error: any) {
       console.error('Error creating order:', error);
-      throw error;
+      if (error.response?.data?.message) {
+        throw new Error(error.response.data.message);
+      }
+      throw new Error('Failed to create order');
     }
   },
 

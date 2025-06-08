@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Facebook from 'expo-auth-session/providers/facebook';
 import * as Google from 'expo-auth-session/providers/google';
@@ -7,25 +6,19 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import authService from '../services/auth.service';
 import { User } from '../types';
 
-// Define auth response types
-interface AuthResponse {
-  user: User;
-  token: string;
-  refreshToken: string;
-}
-
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
+  isAuthenticated: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
-  register: (userData: { name: string; email: string; password: string; phone?: string }) => Promise<void>;
+  register: (userData: { name: string; email: string; password: string; city: string; phone?: string }) => Promise<void>;
   logout: () => Promise<void>;
   updateProfile: (userData: Partial<User>) => Promise<void>;
-  resetPassword: (email: string, code: string) => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<void>;
+  resetPassword: (token: string, newPassword: string) => Promise<void>;
   verifyEmail: (token: string) => Promise<void>;
-  verifyPhone: (phone: string, code: string) => Promise<void>;
-  refreshToken: () => Promise<void>;
+  verifyPhone: (code: string) => Promise<void>;
   isBiometricAvailable: boolean;
   enableBiometric: () => Promise<void>;
   disableBiometric: () => Promise<void>;
@@ -37,12 +30,6 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-const STORAGE_KEYS = {
-  AUTH_TOKEN: '@auth_token',
-  REFRESH_TOKEN: '@refresh_token',
-  USER_DATA: '@user_data',
-};
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -86,65 +73,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsBiometricAvailable(compatible && enrolled);
     } catch (error) {
       console.error('Biometric check error:', error);
+      setIsBiometricAvailable(false);
     }
   };
 
   const loadStoredAuth = async () => {
     try {
-      const [token, userData] = await Promise.all([
-        AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN),
-        AsyncStorage.getItem(STORAGE_KEYS.USER_DATA),
+      setIsLoading(true);
+      const [token, storedUser] = await Promise.all([
+        authService.getStoredToken(),
+        authService.getStoredUser(),
       ]);
 
-      if (token && userData) {
-        const parsedUser = JSON.parse(userData);
-        setUser(parsedUser);
-        await authService.loadBiometricPreference();
+      if (token && storedUser) {
+        // Verify token is still valid by getting fresh profile
+        try {
+          const freshUser = await authService.getProfile();
+          setUser(freshUser);
+        } catch (error) {
+          // Token is invalid, clear stored data
+          console.log('Stored token is invalid, clearing auth data');
+          await authService.clearAuthData();
+          setUser(null);
+        }
+      } else {
+        setUser(null);
       }
     } catch (error) {
       console.error('Error loading auth data:', error);
+      setUser(null);
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const saveAuthData = async (token: string, refreshToken: string, userData: User) => {
-    try {
-      await Promise.all([
-        AsyncStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, token),
-        AsyncStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, refreshToken),
-        AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(userData)),
-      ]);
-      await authService.loadBiometricPreference();
-      setUser(userData);
-    } catch (error) {
-      console.error('Error saving auth data:', error);
-      throw new Error('Failed to save authentication data');
-    }
-  };
-
-  const clearAuthData = async () => {
-    try {
-      await Promise.all([
-        AsyncStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN),
-        AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN),
-        AsyncStorage.removeItem(STORAGE_KEYS.USER_DATA),
-      ]);
-      await authService.clearAuthData();
-      setUser(null);
-    } catch (error) {
-      console.error('Error clearing auth data:', error);
-      throw new Error('Failed to clear authentication data');
-    }
-  };
-
-  const updateStoredUser = async (updatedUser: User) => {
-    try {
-      await AsyncStorage.setItem(STORAGE_KEYS.USER_DATA, JSON.stringify(updatedUser));
-      setUser(updatedUser);
-    } catch (error) {
-      console.error('Error updating user data:', error);
-      throw new Error('Failed to update user data');
     }
   };
 
@@ -152,8 +111,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       setIsLoading(true);
       setError(null);
-      const response = await authService.login(email, password) as unknown as AuthResponse;
-      await saveAuthData(response.token, response.refreshToken, response.user);
+      const response = await authService.login(email, password);
+      if (response.user) {
+        setUser(response.user);
+      }
     } catch (error: any) {
       setError(error.message || 'Login failed');
       throw error;
@@ -162,12 +123,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const register = async (userData: { name: string; email: string; password: string; phone?: string }) => {
+  const register = async (userData: { name: string; email: string; password: string; city: string; phone?: string }) => {
     try {
       setIsLoading(true);
       setError(null);
-      const response = await authService.register(userData) as AuthResponse;
-      await saveAuthData(response.token, response.refreshToken, response.user);
+      await authService.register(userData);
+      // After successful registration, user needs to login
     } catch (error: any) {
       setError(error.message || 'Registration failed');
       throw error;
@@ -181,9 +142,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(true);
       setError(null);
       await authService.logout();
-      await clearAuthData();
+      setUser(null);
     } catch (error: any) {
       setError(error.message || 'Logout failed');
+      // Still clear user state even if logout fails
+      setUser(null);
       throw error;
     } finally {
       setIsLoading(false);
@@ -195,7 +158,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(true);
       setError(null);
       const updatedUser = await authService.updateProfile(userData);
-      await updateStoredUser(updatedUser);
+      setUser(updatedUser);
     } catch (error: any) {
       setError(error.message || 'Profile update failed');
       throw error;
@@ -204,11 +167,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const resetPassword = async (email: string, code: string) => {
+  const requestPasswordReset = async (email: string) => {
     try {
       setIsLoading(true);
       setError(null);
-      await authService.resetPassword(email, code);
+      await authService.requestPasswordReset(email);
+    } catch (error: any) {
+      setError(error.message || 'Password reset request failed');
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const resetPassword = async (token: string, newPassword: string) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      await authService.resetPassword(token, newPassword);
     } catch (error: any) {
       setError(error.message || 'Password reset failed');
       throw error;
@@ -221,8 +197,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       setIsLoading(true);
       setError(null);
-      const updatedUser = await (authService as any).verifyEmail(token);
-      await updateStoredUser(updatedUser);
+      await authService.verifyEmail(token);
+      // Refresh user profile after verification
+      if (user) {
+        const updatedUser = await authService.getProfile();
+        setUser(updatedUser);
+      }
     } catch (error: any) {
       setError(error.message || 'Email verification failed');
       throw error;
@@ -231,32 +211,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const verifyPhone = async (phone: string, code: string) => {
+  const verifyPhone = async (code: string) => {
     try {
       setIsLoading(true);
       setError(null);
-      const updatedUser = await (authService as any).verifyPhone(phone, code);
-      await updateStoredUser(updatedUser);
+      await authService.verifyPhone(code);
+      // Refresh user profile after verification
+      if (user) {
+        const updatedUser = await authService.getProfile();
+        setUser(updatedUser);
+      }
     } catch (error: any) {
       setError(error.message || 'Phone verification failed');
       throw error;
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const refreshToken = async () => {
-    try {
-      const refreshToken = await AsyncStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
-      if (!refreshToken) {
-        throw new Error('No refresh token found');
-      }
-      const response = await authService.refreshToken() as AuthResponse;
-      await saveAuthData(response.token, response.refreshToken, response.user);
-    } catch (error: any) {
-      setError(error.message || 'Token refresh failed');
-      await clearAuthData();
-      throw error;
     }
   };
 
@@ -266,7 +235,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         promptMessage: 'Authenticate to enable biometric login',
       });
       if (result.success) {
-        await AsyncStorage.setItem('biometricEnabled', 'true');
+        await authService.enableBiometric();
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to enable biometric');
@@ -276,7 +245,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const disableBiometric = async () => {
     try {
-      await AsyncStorage.removeItem('biometricEnabled');
+      await authService.disableBiometric();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to disable biometric');
       throw error;
@@ -289,9 +258,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         promptMessage: 'Authenticate to login',
       });
       if (result.success) {
-        const storedUser = await AsyncStorage.getItem(STORAGE_KEYS.USER_DATA);
+        const storedUser = await authService.getStoredUser();
         if (storedUser) {
-          setUser(JSON.parse(storedUser));
+          // Verify the stored token is still valid
+          try {
+            const freshUser = await authService.getProfile();
+            setUser(freshUser);
+          } catch (error) {
+            throw new Error('Biometric login failed. Please login again.');
+          }
+        } else {
+          throw new Error('No stored user data found');
         }
       }
     } catch (error) {
@@ -302,6 +279,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loginWithGoogle = async () => {
     try {
+      setError(null);
       await promptGoogleAsync();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Google login failed');
@@ -312,16 +290,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const handleGoogleLogin = async (accessToken: string | undefined) => {
     if (!accessToken) throw new Error('No access token');
     try {
-      const response = await authService.loginWithGoogle(accessToken) as AuthResponse;
-      await saveAuthData(response.token, response.refreshToken, response.user);
+      setIsLoading(true);
+      const response = await authService.loginWithGoogle(accessToken);
+      if (response.user) {
+        setUser(response.user);
+      }
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Google login failed');
       throw error;
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const loginWithFacebook = async () => {
     try {
+      setError(null);
       await promptFacebookAsync();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Facebook login failed');
@@ -332,27 +316,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const handleFacebookLogin = async (accessToken: string | undefined) => {
     if (!accessToken) throw new Error('No access token');
     try {
-      const response = await authService.loginWithFacebook(accessToken) as AuthResponse;
-      await saveAuthData(response.token, response.refreshToken, response.user);
+      setIsLoading(true);
+      const response = await authService.loginWithFacebook(accessToken);
+      if (response.user) {
+        setUser(response.user);
+      }
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Facebook login failed');
       throw error;
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const loginWithApple = async () => {
     try {
+      setIsLoading(true);
+      setError(null);
       const credential = await AppleAuthentication.signInAsync({
         requestedScopes: [
           AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
           AppleAuthentication.AppleAuthenticationScope.EMAIL,
         ],
       });
-      const response = await authService.loginWithApple(credential.identityToken || '') as AuthResponse;
-      await saveAuthData(response.token, response.refreshToken, response.user);
+      const response = await authService.loginWithApple(credential.identityToken || '');
+      if (response.user) {
+        setUser(response.user);
+      }
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Apple login failed');
       throw error;
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -361,15 +356,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value = {
     user,
     isLoading,
+    isAuthenticated: !!user,
     error,
     login,
     register,
     logout,
     updateProfile,
+    requestPasswordReset,
     resetPassword,
     verifyEmail,
     verifyPhone,
-    refreshToken,
     isBiometricAvailable,
     enableBiometric,
     disableBiometric,

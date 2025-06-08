@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Cart, CartItem } from '../types';
+import api from './api';
 import { Product } from './product.service';
 
 const CART_STORAGE_KEY = 'cart';
@@ -8,29 +9,83 @@ const CartService = {
 
   getCart: async (): Promise<Cart> => {
     try {
-      // Use local storage only to avoid CORS issues
-      const cartData = await AsyncStorage.getItem(CART_STORAGE_KEY);
-      if (cartData) {
-        return JSON.parse(cartData);
+      // Try to get cart from backend first
+      try {
+        const response = await api.get('/cart');
+        const backendCart = response.data;
+        
+        // Convert backend cart format to our format
+        const cart: Cart = {
+          items: backendCart.items?.map((item: any) => ({
+            product: {
+              id: item.product_id,
+              name: item.product_name || 'Unknown Product',
+              price: item.price,
+              quantity: item.available_quantity || 0,
+              category: item.category || 'Unknown',
+              images: item.image_url ? [item.image_url] : [],
+              shopId: item.shop_id || 0,
+              rating: 0,
+              stockStatus: 'in_stock' as const,
+              description: ''
+            },
+            quantity: item.quantity
+          })) || [],
+          total: backendCart.total || 0
+        };
+        
+        // Save to local storage as backup
+        await AsyncStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+        return cart;
+      } catch (apiError) {
+        console.log('Backend cart not available, using local storage');
+        
+        // Fallback to local storage
+        const cartData = await AsyncStorage.getItem(CART_STORAGE_KEY);
+        if (cartData) {
+          return JSON.parse(cartData);
+        }
+        return { items: [], total: 0 };
       }
-      return { items: [], total: 0 };
     } catch (error) {
-      console.error('Error loading cart from storage:', error);
+      console.error('Error loading cart:', error);
       return { items: [], total: 0 };
     }
   },
   
   saveCart: async (cart: Cart): Promise<void> => {
     try {
-      // Save to local storage only to avoid CORS issues
+      // Save to local storage
       await AsyncStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
+      
+      // Try to sync with backend
+      try {
+        const cartItems = cart.items.map(item => ({
+          product_id: item.product.id,
+          quantity: item.quantity
+        }));
+        
+        await api.post('/cart/sync', { items: cartItems });
+      } catch (apiError) {
+        console.log('Failed to sync cart with backend, saved locally');
+      }
     } catch (error) {
-      console.error('Failed to save cart to storage:', error);
+      console.error('Failed to save cart:', error);
       throw error;
     }
   },
   
   addToCart: async (product: Product, quantity: number = 1): Promise<Cart> => {
+    try {
+      // Try to add to backend cart first
+      await api.post('/cart', {
+        product_id: product.id,
+        quantity: quantity
+      });
+    } catch (apiError) {
+      console.log('Failed to add to backend cart, using local cart');
+    }
+    
     // Validate stock with fallback values
     const stockStatus = product.stockStatus || (product.quantity > 10 ? 'in_stock' : (product.quantity > 0 ? 'low_stock' : 'out_of_stock'));
     

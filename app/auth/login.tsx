@@ -16,7 +16,6 @@ import { ThemedText } from '../../components/ThemedText';
 import { ThemedView } from '../../components/ThemedView';
 import { useAuth } from '../../context/AuthContext';
 import { useThemeColor } from '../../hooks/useThemeColor';
-import authService from '../../services/auth.service';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -30,7 +29,7 @@ export default function LoginScreen() {
     loginWithFacebook,
     loginWithApple,
     isBiometricAvailable,
-    authenticateWithBiometric,
+    loginWithBiometric,
     error,
     clearError,
   } = useAuth();
@@ -66,15 +65,8 @@ export default function LoginScreen() {
   const handleBiometricLogin = async () => {
     try {
       setIsLoading(true);
-      const success = await authenticateWithBiometric();
-      if (success) {
-        // If biometric auth succeeds, we'll use the stored credentials
-        const authData = await authService.getStoredAuthData();
-        if (authData) {
-          await login(authData.user.email, ''); // Password not needed for biometric
-          router.replace('/');
-        }
-      }
+      await loginWithBiometric();
+      router.replace('/');
     } catch (error) {
       console.error('Biometric login error:', error);
     } finally {

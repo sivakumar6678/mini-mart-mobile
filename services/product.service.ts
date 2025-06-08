@@ -114,9 +114,6 @@ const MOCK_PRODUCTS: Product[] = [
   },
 ];
 
-// TODO: Replace with actual API endpoints
-const API_URL = 'https://api.minimart.com';
-
 // Enhanced product normalization with validation and fallbacks
 const normalizeProduct = (product: any): Product => {
   // Validate required fields
@@ -169,6 +166,7 @@ const productService = {
     sort?: string;
     page?: number;
     limit?: number;
+    city?: string;
   }): Promise<{ products: Product[]; total: number }> {
     try {
       const queryParams = new URLSearchParams();
@@ -177,30 +175,72 @@ const productService = {
       if (params?.sort) queryParams.append('sort', params.sort);
       if (params?.page) queryParams.append('page', params.page.toString());
       if (params?.limit) queryParams.append('limit', params.limit.toString());
+      if (params?.city) queryParams.append('city', params.city);
 
-      const response = await fetch(`${API_URL}/products?${queryParams.toString()}`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch products');
-      }
-
-      return await response.json();
-    } catch (error) {
+      const response = await api.get(`/products?${queryParams.toString()}`);
+      
+      // Normalize the products from backend response
+      const products = response.data.map(normalizeProduct);
+      
+      return {
+        products,
+        total: products.length
+      };
+    } catch (error: any) {
       console.error('Error fetching products:', error);
-      throw error;
+      
+      // Fallback to mock data if API fails
+      console.log('Using mock data as fallback');
+      let filteredProducts = [...MOCK_PRODUCTS];
+      
+      if (params?.category) {
+        filteredProducts = filteredProducts.filter(p => 
+          p.category.toLowerCase() === params.category?.toLowerCase()
+        );
+      }
+      
+      if (params?.search) {
+        const searchTerm = params.search.toLowerCase();
+        filteredProducts = filteredProducts.filter(p => 
+          p.name.toLowerCase().includes(searchTerm) ||
+          p.description.toLowerCase().includes(searchTerm)
+        );
+      }
+      
+      return {
+        products: filteredProducts,
+        total: filteredProducts.length
+      };
     }
   },
 
   async getProductById(id: string): Promise<Product> {
     try {
-      const response = await fetch(`${API_URL}/products/${id}`);
-      if (!response.ok) {
-        throw new Error('Product not found');
-      }
-
-      return await response.json();
-    } catch (error) {
+      const response = await api.get(`/products/${id}`);
+      return normalizeProduct(response.data);
+    } catch (error: any) {
       console.error('Error fetching product:', error);
-      throw error;
+      
+      // Fallback to mock data
+      const mockProduct = MOCK_PRODUCTS.find(p => p.id.toString() === id);
+      if (mockProduct) {
+        return mockProduct;
+      }
+      
+      throw new Error('Product not found');
+    }
+  },
+
+  async getCategories(): Promise<string[]> {
+    try {
+      const response = await api.get('/categories');
+      return response.data;
+    } catch (error: any) {
+      console.error('Error fetching categories:', error);
+      
+      // Fallback to mock categories
+      const categories = [...new Set(MOCK_PRODUCTS.map(p => p.category))];
+      return categories;
     }
   },
 
