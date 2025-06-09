@@ -1,6 +1,3 @@
-Here you go broo — a **single, complete `project-context.md` file** containing all the necessary details for Zencoder AI (or any LLM) to understand and follow your project structure, stack, and rules without confusion:
-
----
 
 ```markdown
 # 🧠 Project Context: City Mart (Full Stack App)

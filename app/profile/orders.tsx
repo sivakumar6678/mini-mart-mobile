@@ -4,7 +4,8 @@ import { ThemedView } from '@/components/ThemedView';
 import { Colors } from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import OrderService, { Order } from '@/services/order.service';
+import OrderService from '@/services/order.service';
+import { Order } from '@/types';
 import { formatCurrency } from '@/utils/formatCurrency';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -18,119 +19,22 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
+  Dimensions,
+  Platform
 } from 'react-native';
-// Make sure OrderItem type includes 'image' property in order.service.ts
-// Mock orders data
-const ORDERS: Order[] = [
-  {
-    id: 1,
-    userId: 1,
-    items: [
-      {
-        productId: 1,
-        quantity: 2,
-        price: 99,
-        productName: 'Fresh Organic Apples',
-        // image: 'https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6',
-      },
-      {
-        productId: 3,
-        quantity: 1,
-        price: 60,
-        productName: 'Organic Milk 1L',
-        // image: 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea',
-      },
-    ],
-    total: 258,
-    status: 'delivered',
-    addressId: 1,
-    createdAt: '2023-06-15T10:30:00Z',
-  },
-  {
-    id: 2,
-    userId: 1,
-    items: [
-      {
-        productId: 2,
-        quantity: 1,
-        price: 45,
-        productName: 'Whole Wheat Bread',
-        // image: 'https://images.unsplash.com/photo-1571771894821-ce9b6c11b08e',
-      },
-      {
-        productId: 4,
-        quantity: 3,
-        price: 30,
-        productName: 'Fresh Tomatoes',
-        // image: 'https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6',
-      },
-    ],
-    total: 135,
-    status: 'dispatched',
-    addressId: 1,
-    createdAt: '2023-06-20T14:45:00Z',
-  },
-  {
-    id: 3,
-    userId: 1,
-    items: [
-      {
-        productId: 5,
-        quantity: 2,
-        price: 65,
-        productName: 'Organic Bananas',
-        // image: 'https://images.unsplash.com/photo-1571771894821-ce9b6c11b08e',
-      },
-    ],
-    total: 130,
-    status: 'confirmed',
-    addressId: 2,
-    createdAt: '2023-06-25T09:15:00Z',
-  },
-  {
-    id: 4,
-    userId: 1,
-    items: [
-      {
-        productId: 6,
-        quantity: 1,
-        price: 35,
-        productName: 'Fresh Carrots',
-        // image: 'https://images.unsplash.com/photo-1598170845058-32b9d6a5da37',
-      },
-      {
-        productId: 1,
-        quantity: 1,
-        price: 99,
-        productName: 'Fresh Organic Apples',
-        // image: 'https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6',
-      },
-    ],
-    total: 134,
-    status: 'pending',
-    addressId: 1,
-    createdAt: '2023-06-28T16:20:00Z',
-  },
-];
+
+const { width } = Dimensions.get('window');
 
 // Filter options for orders
 const FILTER_OPTIONS = [
   { label: 'All', value: 'all' },
   { label: 'Pending', value: 'pending' },
-  { label: 'Confirmed', value: 'confirmed' },
-  { label: 'Dispatched', value: 'dispatched' },
+  { label: 'Processing', value: 'processing' },
+  { label: 'Shipped', value: 'shipped' },
   { label: 'Delivered', value: 'delivered' },
   { label: 'Cancelled', value: 'cancelled' },
 ];
-
-interface ExtendedOrderItem {
-  productId: number;
-  quantity: number;
-  price: number;
-  productName: string;
-  image?: string;
-}
 
 export default function OrdersScreen() {
   const { user } = useAuth();
@@ -157,20 +61,24 @@ export default function OrdersScreen() {
     setError(null);
 
     try {
-      const userOrders = await OrderService.getUserOrders();
-      setOrders(userOrders);
+      // Use the correct API method - getOrders() for current user's orders
+      const response = await OrderService.getOrders();
+      setOrders(response.orders || []);
     } catch (error: any) {
       console.error('Error loading orders:', error);
       setError(error.response?.data?.message || 'Failed to load orders');
       
-      Alert.alert(
-        'Error',
-        'Failed to load orders. Please check your connection and try again.',
-        [
-          { text: 'Retry', onPress: () => loadOrders() },
-          { text: 'Cancel', style: 'cancel' }
-        ]
-      );
+      // Don't show alert on refresh, just log the error
+      if (!showRefreshing) {
+        Alert.alert(
+          'Error',
+          'Failed to load orders. Please check your connection and try again.',
+          [
+            { text: 'Retry', onPress: () => loadOrders() },
+            { text: 'Cancel', style: 'cancel' }
+          ]
+        );
+      }
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -203,12 +111,12 @@ export default function OrdersScreen() {
     setActiveFilter(filterValue);
   };
 
-  const handleOrderPress = (orderId: number) => {
+  const handleOrderPress = (orderId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push(`/profile/orders/${orderId}`);
+    router.push(`/order/track?id=${orderId}`);
   };
 
-  const handleTrackOrder = (orderId: number, event: any) => {
+  const handleTrackOrder = (orderId: string, event: any) => {
     event.stopPropagation();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.push(`/order/track?id=${orderId}`);
@@ -218,9 +126,9 @@ export default function OrdersScreen() {
     switch (status) {
       case 'pending':
         return '#F5A623';
-      case 'confirmed':
+      case 'processing':
         return '#4A90E2';
-      case 'dispatched':
+      case 'shipped':
         return '#7ED321';
       case 'delivered':
         return '#50E3C2';
@@ -235,9 +143,9 @@ export default function OrdersScreen() {
     switch (status) {
       case 'pending':
         return 'time-outline';
-      case 'confirmed':
-        return 'checkmark-circle-outline';
-      case 'dispatched':
+      case 'processing':
+        return 'construct-outline';
+      case 'shipped':
         return 'bicycle-outline';
       case 'delivered':
         return 'bag-check-outline';
@@ -254,36 +162,93 @@ export default function OrdersScreen() {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
     });
+  };
+
+  const getItemsPreview = (items: Order['items']) => {
+    if (items.length === 0) return 'No items';
+    if (items.length === 1) return `${items[0].quantity}x Item`;
+    return `${items.length} items`;
   };
 
   const renderOrderItem = ({ item }: { item: Order }) => (
     <TouchableOpacity
-      style={[styles.orderCard, { backgroundColor: colors.cardBackground }]}
-      onPress={() => handleOrderPress(item.id!)}
-      activeOpacity={0.8}
+      style={[styles.orderCard, { 
+        backgroundColor: colors.cardBackground,
+        borderColor: colors.border,
+      }]}
+      onPress={() => handleOrderPress(item.id)}
+      activeOpacity={0.7}
     >
+      {/* Order Header */}
       <View style={styles.orderHeader}>
         <View style={styles.orderIdContainer}>
-          <ThemedText style={styles.orderId}>Order #{item.id}</ThemedText>
-          <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) + '20' }]}>
-            <Ionicons name={getStatusIcon(item.status) as any} size={14} color={getStatusColor(item.status)} />
-            <ThemedText style={styles.statusText}>{item.status}</ThemedText>
-          </View>
+          <ThemedText style={[styles.orderId, { color: colors.text }]}>
+            Order #{item.id}
+          </ThemedText>
+          <ThemedText style={[styles.orderDate, { color: colors.tabIconDefault }]}>
+            {formatDate(item.createdAt)}
+          </ThemedText>
+        </View>
+        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) + '15' }]}>
+          <Ionicons 
+            name={getStatusIcon(item.status) as any} 
+            size={14} 
+            color={getStatusColor(item.status)} 
+          />
+          <ThemedText style={[styles.statusText, { color: getStatusColor(item.status) }]}>
+            {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+          </ThemedText>
+        </View>
+      </View>
+
+      {/* Order Content */}
+      <View style={styles.orderContent}>
+        <View style={styles.orderInfo}>
+          <Ionicons name="bag-outline" size={16} color={colors.tabIconDefault} />
+          <ThemedText style={[styles.itemsText, { color: colors.tabIconDefault }]}>
+            {getItemsPreview(item.items)}
+          </ThemedText>
+        </View>
+        
+        <View style={styles.orderInfo}>
+          <Ionicons name="location-outline" size={16} color={colors.tabIconDefault} />
+          <ThemedText style={[styles.addressText, { color: colors.tabIconDefault }]} numberOfLines={1}>
+            {item.shippingAddress.city}, {item.shippingAddress.state}
+          </ThemedText>
         </View>
       </View>
       
+      {/* Order Footer */}
       <View style={[styles.orderFooter, { borderTopColor: colors.border }]}>
-        <ThemedText style={styles.orderTotalLabel}>Total:</ThemedText>
-        <ThemedText style={styles.orderTotal}>{formatCurrency(item.total)}</ThemedText>
+        <View style={styles.totalContainer}>
+          <ThemedText style={[styles.totalLabel, { color: colors.tabIconDefault }]}>
+            Total:
+          </ThemedText>
+          <ThemedText style={[styles.totalAmount, { color: colors.text }]}>
+            {formatCurrency(item.total)}
+          </ThemedText>
+        </View>
         
-        {item.status === 'dispatched' && (
+        {(item.status === 'shipped' || item.status === 'processing') && (
           <TouchableOpacity 
             style={[styles.trackButton, { backgroundColor: colors.tint }]}
-            onPress={(e) => handleTrackOrder(item.id!, e)}
+            onPress={(e) => handleTrackOrder(item.id, e)}
           >
             <Ionicons name="navigate-outline" size={16} color="#FFFFFF" />
             <Text style={styles.trackButtonText}>Track</Text>
+          </TouchableOpacity>
+        )}
+        
+        {item.status === 'delivered' && (
+          <TouchableOpacity 
+            style={[styles.viewButton, { borderColor: colors.tint }]}
+            onPress={(e) => handleTrackOrder(item.id, e)}
+          >
+            <Ionicons name="eye-outline" size={16} color={colors.tint} />
+            <Text style={[styles.viewButtonText, { color: colors.tint }]}>View</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -293,16 +258,19 @@ export default function OrdersScreen() {
   const renderEmptyComponent = () => {
     if (activeFilter !== 'all') {
       return (
-        <View style={styles.emptyFilterContainer}>
-          <Ionicons name="filter-outline" size={50} color={colors.tabIconDefault} />
-          <ThemedText style={styles.emptyFilterText}>
-            No {activeFilter} orders found
+        <View style={styles.emptyContainer}>
+          <Ionicons name="filter-outline" size={60} color={colors.tabIconDefault} />
+          <ThemedText style={[styles.emptyTitle, { color: colors.text }]}>
+            No {activeFilter} orders
+          </ThemedText>
+          <ThemedText style={[styles.emptySubtext, { color: colors.tabIconDefault }]}>
+            You don't have any {activeFilter} orders yet
           </ThemedText>
           <Button
             title="Show All Orders"
             onPress={() => setActiveFilter('all')}
             variant="outline"
-            style={styles.showAllButton}
+            style={styles.actionButton}
           />
         </View>
       );
@@ -311,9 +279,11 @@ export default function OrdersScreen() {
     return (
       <View style={styles.emptyContainer}>
         <Ionicons name="bag-outline" size={80} color={colors.tabIconDefault} />
-        <ThemedText style={styles.emptyText}>No orders yet</ThemedText>
-        <ThemedText style={styles.emptySubtext}>
-          Your order history will appear here
+        <ThemedText style={[styles.emptyTitle, { color: colors.text }]}>
+          No orders yet
+        </ThemedText>
+        <ThemedText style={[styles.emptySubtext, { color: colors.tabIconDefault }]}>
+          Your order history will appear here once you make your first purchase
         </ThemedText>
         <Button
           title="Start Shopping"
@@ -322,17 +292,42 @@ export default function OrdersScreen() {
             router.push('/');
           }}
           icon="bag-outline"
-          style={styles.shopButton}
+          style={styles.actionButton}
         />
       </View>
     );
   };
+
+  const renderFilterItem = ({ item }: { item: typeof FILTER_OPTIONS[0] }) => (
+    <TouchableOpacity
+      style={[
+        styles.filterChip,
+        { 
+          backgroundColor: activeFilter === item.value ? colors.tint : 'transparent',
+          borderColor: activeFilter === item.value ? colors.tint : colors.border,
+        }
+      ]}
+      onPress={() => handleFilterChange(item.value)}
+    >
+      <ThemedText 
+        style={[
+          styles.filterText,
+          { color: activeFilter === item.value ? '#FFFFFF' : colors.text }
+        ]}
+      >
+        {item.label}
+      </ThemedText>
+    </TouchableOpacity>
+  );
 
   if (isLoading) {
     return (
       <ThemedView style={styles.loadingContainer}>
         <Stack.Screen options={{ title: 'My Orders' }} />
         <ActivityIndicator size="large" color={colors.tint} />
+        <ThemedText style={[styles.loadingText, { color: colors.tabIconDefault }]}>
+          Loading your orders...
+        </ThemedText>
       </ThemedView>
     );
   }
@@ -343,43 +338,22 @@ export default function OrdersScreen() {
         options={{ 
           title: 'My Orders',
           headerRight: () => (
-            orders.length > 0 ? (
-              <TouchableOpacity 
-                style={styles.refreshButton}
-                onPress={handleRefresh}
-              >
-                <Ionicons name="refresh-outline" size={24} color={colors.text} />
-              </TouchableOpacity>
-            ) : null
+            <TouchableOpacity 
+              style={styles.refreshButton}
+              onPress={handleRefresh}
+            >
+              <Ionicons name="refresh-outline" size={24} color={colors.text} />
+            </TouchableOpacity>
           )
         }} 
       />
       
+      {/* Filters */}
       {orders.length > 0 && (
         <View style={styles.filtersContainer}>
           <FlatList
             data={FILTER_OPTIONS}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={[
-                  styles.filterOption,
-                  activeFilter === item.value && { 
-                    backgroundColor: colors.tint,
-                    borderColor: colors.tint,
-                  }
-                ]}
-                onPress={() => handleFilterChange(item.value)}
-              >
-                <ThemedText 
-                  style={[
-                    styles.filterText,
-                    activeFilter === item.value && { color: '#FFFFFF' }
-                  ]}
-                >
-                  {item.label}
-                </ThemedText>
-              </TouchableOpacity>
-            )}
+            renderItem={renderFilterItem}
             horizontal
             showsHorizontalScrollIndicator={false}
             keyExtractor={(item) => item.value}
@@ -388,26 +362,26 @@ export default function OrdersScreen() {
         </View>
       )}
       
-      {orders.length > 0 ? (
-        <FlatList
-          data={filteredOrders}
-          renderItem={renderOrderItem}
-          keyExtractor={(item) => item.id!.toString()}
-          contentContainerStyle={styles.ordersList}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={isRefreshing}
-              onRefresh={handleRefresh}
-              colors={[colors.tint]}
-              tintColor={colors.tint}
-            />
-          }
-          ListEmptyComponent={renderEmptyComponent}
-        />
-      ) : (
-        renderEmptyComponent()
-      )}
+      {/* Orders List */}
+      <FlatList
+        data={filteredOrders}
+        renderItem={renderOrderItem}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={[
+          styles.ordersList,
+          filteredOrders.length === 0 && styles.emptyList
+        ]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            colors={[colors.tint]}
+            tintColor={colors.tint}
+          />
+        }
+        ListEmptyComponent={renderEmptyComponent}
+      />
     </ThemedView>
   );
 }
@@ -415,67 +389,79 @@ export default function OrdersScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 16,
+    backgroundColor: 'transparent',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    gap: 16,
+  },
+  loadingText: {
+    fontSize: 16,
+    marginTop: 8,
   },
   refreshButton: {
     padding: 8,
+    marginRight: 8,
   },
   filtersContainer: {
-    marginBottom: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
   },
   filtersList: {
-    paddingVertical: 8,
+    paddingHorizontal: 4,
   },
-  filterOption: {
+  filterChip: {
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#E0E0E0',
-    marginRight: 8,
+    marginHorizontal: 4,
+    minWidth: 70,
+    alignItems: 'center',
   },
   filterText: {
     fontSize: 14,
     fontWeight: '500',
   },
   ordersList: {
-    paddingBottom: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 20,
+  },
+  emptyList: {
+    flexGrow: 1,
   },
   orderCard: {
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
     marginBottom: 16,
+    borderWidth: 1,
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
       height: 2,
     },
     shadowOpacity: 0.1,
-    shadowRadius: 3.84,
-    elevation: 5,
+    shadowRadius: 8,
+    elevation: 4,
   },
   orderHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   orderIdContainer: {
-    flexDirection: 'column',
+    flex: 1,
   },
   orderId: {
-    fontWeight: '700',
     fontSize: 16,
-    marginBottom: 6,
+    fontWeight: '600',
+    marginBottom: 4,
   },
   orderDate: {
-    opacity: 0.7,
-    fontSize: 14,
+    fontSize: 12,
   },
   statusBadge: {
     flexDirection: 'row',
@@ -483,66 +469,47 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
-    alignSelf: 'flex-start',
+    gap: 4,
   },
   statusText: {
-    marginLeft: 4,
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '500',
   },
-  orderItemsContainer: {
-    marginBottom: 16,
-  },
-  orderItemRow: {
-    flexDirection: 'row',
+  orderContent: {
+    gap: 8,
     marginBottom: 12,
   },
-  itemImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-    marginRight: 12,
-  },
-  orderItemInfo: {
-    flex: 1,
-  },
-  orderItemName: {
-    fontSize: 14,
-    fontWeight: '500',
-    marginBottom: 4,
-  },
-  orderItemDetails: {
+  orderInfo: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
   },
-  orderItemPrice: {
+  itemsText: {
     fontSize: 14,
+    flex: 1,
   },
-  orderItemQuantity: {
+  addressText: {
     fontSize: 14,
-    marginLeft: 8,
-    opacity: 0.7,
-  },
-  moreItems: {
-    fontSize: 12,
-    opacity: 0.7,
-    fontStyle: 'italic',
+    flex: 1,
   },
   orderFooter: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 16,
+    paddingTop: 12,
     borderTopWidth: 1,
   },
-  orderTotalLabel: {
-    fontSize: 14,
-    fontWeight: '500',
+  totalContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
-  orderTotal: {
-    fontWeight: '700',
+  totalLabel: {
+    fontSize: 14,
+  },
+  totalAmount: {
     fontSize: 16,
-    marginLeft: 8,
-    flex: 1,
+    fontWeight: '600',
   },
   trackButton: {
     flexDirection: 'row',
@@ -550,44 +517,50 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
+    gap: 4,
   },
   trackButtonText: {
     color: '#FFFFFF',
     fontSize: 12,
-    fontWeight: '600',
-    marginLeft: 4,
+    fontWeight: '500',
+  },
+  viewButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 4,
+  },
+  viewButtonText: {
+    fontSize: 12,
+    fontWeight: '500',
   },
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 32,
+    paddingVertical: 64,
   },
-  emptyFilterContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 32,
-  },
-  emptyText: {
+  emptyTitle: {
     fontSize: 20,
     fontWeight: '600',
     marginTop: 16,
     marginBottom: 8,
+    textAlign: 'center',
   },
   emptySubtext: {
     fontSize: 16,
-    opacity: 0.7,
     textAlign: 'center',
-    marginBottom: 24,
+    lineHeight: 24,
+    marginBottom: 32,
   },
-  emptyFilterText: {
-    fontSize: 18,
-    fontWeight: '500',
-    marginTop: 16,
-    marginBottom: 24,
-    textAlign: 'center',
+  actionButton: {
+    minWidth: 160,
   },
+});
   shopButton: {
     marginTop: 8,
   },

@@ -22,6 +22,7 @@ import {
 interface ProductCardProps {
   product: Product;
   horizontal?: boolean;
+  theme?: 'light' | 'dark';
 }
 
 const { width } = Dimensions.get('window');

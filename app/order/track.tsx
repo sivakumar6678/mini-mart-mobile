@@ -4,27 +4,26 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import MockDataService, { MockOrder } from '@/services/mock-data.service';
 import OrderService from '@/services/order.service';
+import { Order } from '@/types';
 import { formatCurrency } from '@/utils/formatCurrency';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { Image } from 'expo-image';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    AccessibilityInfo,
-    ActivityIndicator,
-    Alert,
-    Animated,
-    Dimensions,
-    Linking,
-    Platform,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    TouchableOpacity,
-    View,
+  AccessibilityInfo,
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Dimensions,
+  Linking,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 
 // Professional constants and types
@@ -41,22 +40,16 @@ const STATUS_CONFIG = {
     label: 'Order Placed',
     description: 'Waiting for confirmation',
   },
-  confirmed: {
-    icon: 'checkmark-circle-outline' as const,
-    color: '#4A90E2',
-    label: 'Confirmed',
-    description: 'Order confirmed, preparing for dispatch',
-  },
   processing: {
     icon: 'construct-outline' as const,
     color: '#9B59B6',
     label: 'Processing',
     description: 'Order is being prepared',
   },
-  dispatched: {
+  shipped: {
     icon: 'bicycle-outline' as const,
     color: '#7ED321',
-    label: 'Dispatched',
+    label: 'Shipped',
     description: 'On the way to you',
   },
   delivered: {
@@ -76,7 +69,7 @@ const STATUS_CONFIG = {
 type OrderStatus = keyof typeof STATUS_CONFIG;
 
 interface TrackingState {
-  order: MockOrder | null;
+  order: Order | null;
   address: any | null;
   isLoading: boolean;
   isRefreshing: boolean;
@@ -97,7 +90,7 @@ function OrderTrackingScreen() {
   const progressAnimationRef = useRef(new Animated.Value(0)).current;
   const pulseAnimationRef = useRef(new Animated.Value(1)).current;
   const isMountedRef = useRef(true);
-  const refreshIntervalRef = useRef<NodeJS.Timeout>();
+  const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
   // Centralized state management
   const [trackingState, setTrackingState] = useState<TrackingState>({
@@ -111,20 +104,26 @@ function OrderTrackingScreen() {
 
   // Memoized calculations for performance
   const orderProgress = useMemo(() => {
-    if (!trackingState.order?.statusUpdates) return { activeStep: 0, progress: 0 };
+    if (!trackingState.order?.status) return { activeStep: 0, progress: 0 };
     
-    const statusOrder = ['pending', 'confirmed', 'processing', 'dispatched', 'delivered'];
+    const statusOrder = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
     const currentStatus = trackingState.order.status;
     const activeStep = Math.max(0, statusOrder.indexOf(currentStatus));
     const progress = activeStep / (statusOrder.length - 1);
     
     return { activeStep, progress };
-  }, [trackingState.order?.status, trackingState.order?.statusUpdates]);
+  }, [trackingState.order?.status]);
 
   const deliveryPartnerInfo = useMemo(() => {
-    if (!trackingState.order?.deliveryPartner) return null;
-    return MockDataService.getDeliveryPartnerInfo(trackingState.order.deliveryPartner);
-  }, [trackingState.order?.deliveryPartner]);
+    // Default delivery partner info - in real app this would come from API
+    return {
+      name: 'City Mart Delivery',
+      phone: '+91 98765 43210',
+      vehicle: 'Bike',
+      rating: 4.8,
+      website: 'https://citymart.com/track'
+    };
+  }, []);
 
   // Professional load function with retry logic and error handling
   const loadOrderDetails = useCallback(async (showRefreshing = false) => {
@@ -142,30 +141,26 @@ function OrderTrackingScreen() {
         throw new Error('Order ID is required');
       }
 
-      // Add network simulation delay for better UX
-      await MockDataService.simulateNetworkDelay(500);
+      // Add small delay for better UX
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-      let orderData: MockOrder | null = null;
+      let orderData: Order | null = null;
       let addressData: any = null;
 
       try {
-        // Try API first
-        const apiOrder = await OrderService.getOrderById(Number(id));
-        orderData = apiOrder as MockOrder;
+        // Get order from API
+        orderData = await OrderService.getOrderById(id);
       } catch (apiError) {
-        console.warn('API not available, using mock data:', apiError);
-        // Fallback to mock data
-        orderData = MockDataService.getOrderById(Number(id));
+        console.error('Failed to fetch order:', apiError);
+        throw new Error('Failed to load order details');
       }
 
       if (!orderData) {
         throw new Error('Order not found');
       }
 
-      // Get address data
-      if (orderData.addressId) {
-        addressData = MockDataService.getAddressById(orderData.addressId);
-      }
+      // Address data is already included in the order
+      addressData = orderData.shippingAddress;
 
       if (!isMountedRef.current) return;
 
@@ -258,7 +253,7 @@ function OrderTrackingScreen() {
     
     Alert.alert(
       'Contact Delivery Partner',
-      `Call ${trackingState.order?.deliveryPartner}?`,
+      `Call ${deliveryPartnerInfo.name}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         { 
@@ -267,7 +262,7 @@ function OrderTrackingScreen() {
         }
       ]
     );
-  }, [deliveryPartnerInfo, trackingState.order?.deliveryPartner]);
+  }, [deliveryPartnerInfo]);
 
   const handleTrackExternally = useCallback(() => {
     if (!deliveryPartnerInfo?.website) return;
@@ -303,15 +298,17 @@ function OrderTrackingScreen() {
     const { order } = trackingState;
     
     if (order.status === 'delivered') {
-      const deliveredUpdate = order.statusUpdates.find(update => update.status === 'delivered');
-      return deliveredUpdate ? `Delivered on ${formatDate(deliveredUpdate.timestamp)}` : 'Delivered';
+      return `Delivered on ${formatDate(order.updatedAt)}`;
     }
     
     if (order.status === 'cancelled') {
       return 'Order cancelled';
     }
     
-    return order.estimatedDelivery ? `Estimated delivery by ${formatDate(order.estimatedDelivery)}` : '';
+    // Calculate estimated delivery (2-3 days from order creation)
+    const orderDate = new Date(order.createdAt);
+    const estimatedDate = new Date(orderDate.getTime() + (2 * 24 * 60 * 60 * 1000)); // 2 days
+    return `Estimated delivery by ${formatDate(estimatedDate.toISOString())}`;
   }, [trackingState.order, formatDate]);
 
   // Effects
@@ -345,7 +342,10 @@ function OrderTrackingScreen() {
 
   // Render functions
   const renderStatusTimeline = useCallback(() => {
-    if (!trackingState.order?.statusUpdates) return null;
+    if (!trackingState.order?.status) return null;
+
+    const statusOrder = ['pending', 'processing', 'shipped', 'delivered'];
+    const currentStatusIndex = statusOrder.indexOf(trackingState.order.status);
 
     return (
       <View style={styles.timelineContainer}>
@@ -353,9 +353,9 @@ function OrderTrackingScreen() {
           Order Timeline
         </ThemedText>
         
-        {trackingState.order.statusUpdates.map((update, index) => {
-          const isActive = index <= orderProgress.activeStep;
-          const statusConfig = STATUS_CONFIG[update.status as OrderStatus];
+        {statusOrder.map((status, index) => {
+          const isActive = index <= currentStatusIndex;
+          const statusConfig = STATUS_CONFIG[status as OrderStatus];
           
           return (
             <View key={index} style={styles.timelineItem}>
@@ -374,7 +374,7 @@ function OrderTrackingScreen() {
                     color={isActive ? '#FFFFFF' : colors.tabIconDefault}
                   />
                 </View>
-                {index < trackingState.order.statusUpdates.length - 1 && (
+                {index < statusOrder.length - 1 && (
                   <View
                     style={[
                       styles.timelineLine,
@@ -393,7 +393,7 @@ function OrderTrackingScreen() {
                     { color: isActive ? colors.text : colors.tabIconDefault }
                   ]}
                 >
-                  {statusConfig?.label || update.status}
+                  {statusConfig?.label || status}
                 </ThemedText>
                 <ThemedText
                   style={[
@@ -401,16 +401,18 @@ function OrderTrackingScreen() {
                     { color: colors.tabIconDefault }
                   ]}
                 >
-                  {update.message}
+                  {statusConfig?.description || 'Status update'}
                 </ThemedText>
-                <ThemedText
-                  style={[
-                    styles.timelineTime,
-                    { color: colors.tabIconDefault }
-                  ]}
-                >
-                  {formatDate(update.timestamp)}
-                </ThemedText>
+                {isActive && (
+                  <ThemedText
+                    style={[
+                      styles.timelineTime,
+                      { color: colors.tabIconDefault }
+                    ]}
+                  >
+                    {index === currentStatusIndex ? formatDate(trackingState.order.updatedAt) : ''}
+                  </ThemedText>
+                )}
               </View>
             </View>
           );
@@ -429,17 +431,14 @@ function OrderTrackingScreen() {
         </ThemedText>
         
         {trackingState.order.items.map((item, index) => (
-          <View key={index} style={[styles.orderItem, { borderBottomColor: colors.border }]}>
-            <Image
-              source={{ uri: item.image }}
-              style={styles.itemImage}
-              contentFit="cover"
-              accessibilityLabel={`Image of ${item.productName}`}
-            />
+          <View key={item.id || index} style={[styles.orderItem, { borderBottomColor: colors.border }]}>
+            <View style={[styles.itemImagePlaceholder, { backgroundColor: colors.border }]}>
+              <Ionicons name="bag-outline" size={24} color={colors.tabIconDefault} />
+            </View>
             
             <View style={styles.itemDetails}>
               <ThemedText style={[styles.itemName, { color: colors.text }]}>
-                {item.productName}
+                Item #{item.id || index + 1}
               </ThemedText>
               <ThemedText style={[styles.itemQuantity, { color: colors.tabIconDefault }]}>
                 Quantity: {item.quantity}
@@ -455,7 +454,9 @@ function OrderTrackingScreen() {
   }, [trackingState.order, colors]);
 
   const renderDeliveryInfo = useCallback(() => {
-    if (!trackingState.order || !trackingState.address) return null;
+    if (!trackingState.order) return null;
+
+    const address = trackingState.order.shippingAddress;
 
     return (
       <View style={styles.deliveryContainer}>
@@ -471,10 +472,18 @@ function OrderTrackingScreen() {
                 Delivery Address
               </ThemedText>
               <ThemedText style={[styles.infoValue, { color: colors.text }]}>
-                {trackingState.address.street}
+                {address.name}
               </ThemedText>
               <ThemedText style={[styles.infoValue, { color: colors.text }]}>
-                {trackingState.address.city}, {trackingState.address.state} {trackingState.address.zipCode}
+                {address.addressLine1}
+              </ThemedText>
+              {address.addressLine2 && (
+                <ThemedText style={[styles.infoValue, { color: colors.text }]}>
+                  {address.addressLine2}
+                </ThemedText>
+              )}
+              <ThemedText style={[styles.infoValue, { color: colors.text }]}>
+                {address.city}, {address.state} {address.postalCode}
               </ThemedText>
             </View>
           </View>
@@ -486,7 +495,7 @@ function OrderTrackingScreen() {
                 Delivery Partner
               </ThemedText>
               <ThemedText style={[styles.infoValue, { color: colors.text }]}>
-                {trackingState.order.deliveryPartner}
+                {deliveryPartnerInfo.name}
               </ThemedText>
             </View>
           </View>
@@ -835,6 +844,14 @@ const styles = StyleSheet.create({
     height: 60,
     borderRadius: 8,
     marginRight: 12,
+  },
+  itemImagePlaceholder: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    marginRight: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   itemDetails: {
     flex: 1,

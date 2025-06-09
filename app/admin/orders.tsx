@@ -1,17 +1,16 @@
-import { useNavigation } from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Button } from '@/components/common/Button';
+import { ThemedText } from '@/components/ThemedText';
+import { ThemedView } from '@/components/ThemedView';
+import { Colors } from '@/constants/Colors';
+import { useAuth } from '@/context/AuthContext';
+import { useColorScheme } from '@/hooks/useColorScheme';
+import OrderService from '@/services/order.service';
+import { Order } from '@/types';
+import { formatCurrency } from '@/utils/formatCurrency';
+import { Ionicons } from '@expo/vector-icons';
+import { Stack } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, TextInput, TouchableOpacity } from 'react-native';
-import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
-import { ThemedButton } from '../../components/ThemedButton';
-import { ThemedText } from '../../components/ThemedText';
-import { ThemedView } from '../../components/ThemedView';
-import { useAdmin } from '../../context/AdminContext';
-import { useAuth } from '../../context/AuthContext';
-import { Order } from '../../types';
-import { AdminStackParamList } from '../../types/navigation';
-
-type AdminOrdersScreenNavigationProp = NativeStackNavigationProp<AdminStackParamList, 'AdminOrders'>;
+import { ActivityIndicator, Alert, RefreshControl, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 
 type SortOption = 'newest' | 'oldest' | 'highest' | 'lowest';
 type FilterStatus = Order['status'] | 'all';
@@ -20,9 +19,14 @@ type FilterStatus = Order['status'] | 'all';
 type OrderStatus = 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
 
 export default function AdminOrdersScreen() {
-  const navigation = useNavigation<AdminOrdersScreenNavigationProp>();
   const { user } = useAuth();
-  const { orders, isLoadingOrders, orderError, refreshOrders, updateOrderStatus } = useAdmin();
+  const colorScheme = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
+  
+  // State management
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(true);
+  const [orderError, setOrderError] = useState<string | null>(null);
   
   // State for search, filter, and sort
   const [searchQuery, setSearchQuery] = useState('');
@@ -30,14 +34,47 @@ export default function AdminOrdersScreen() {
   const [sortBy, setSortBy] = useState<SortOption>('newest');
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
 
+  // Load orders function
+  const refreshOrders = async () => {
+    try {
+      setIsLoadingOrders(true);
+      setOrderError(null);
+      const response = await OrderService.getAllOrders();
+      setOrders(response.orders || []);
+    } catch (error: any) {
+      console.error('Error loading orders:', error);
+      setOrderError(error.message || 'Failed to load orders');
+    } finally {
+      setIsLoadingOrders(false);
+    }
+  };
+
+  // Update order status function
+  const updateOrderStatus = async (orderId: string, status: Order['status']) => {
+    try {
+      await OrderService.updateOrderStatus(orderId, status);
+      // Refresh orders after update
+      await refreshOrders();
+    } catch (error: any) {
+      console.error('Error updating order status:', error);
+      Alert.alert('Error', 'Failed to update order status');
+    }
+  };
+
   useEffect(() => {
     refreshOrders();
   }, []);
 
-  if (!user?.role?.includes('admin')) {
+  if (!user || user.role !== 'admin') {
     return (
       <ThemedView style={styles.container}>
-        <ThemedText style={styles.errorText}>Access denied. Admin privileges required.</ThemedText>
+        <Stack.Screen options={{ title: 'Admin Orders' }} />
+        <View style={styles.errorContainer}>
+          <Ionicons name="shield-outline" size={64} color={colors.tabIconDefault} />
+          <ThemedText style={[styles.errorText, { color: colors.text }]}>
+            Access denied. Admin privileges required.
+          </ThemedText>
+        </View>
       </ThemedView>
     );
   }
@@ -75,34 +112,34 @@ export default function AdminOrdersScreen() {
     switch (order.status) {
       case 'pending':
         actions.push(
-          <ThemedButton
+          <Button
             key="process"
             title="Process"
             onPress={() => handleStatusUpdate(order.id, 'processing')}
             style={styles.statusButton}
-            icon="check-circle"
+            icon="checkmark-circle-outline"
           />
         );
         break;
       case 'processing':
         actions.push(
-          <ThemedButton
+          <Button
             key="ship"
             title="Ship"
             onPress={() => handleStatusUpdate(order.id, 'shipped')}
             style={styles.statusButton}
-            icon="local-shipping"
+            icon="bicycle-outline"
           />
         );
         break;
       case 'shipped':
         actions.push(
-          <ThemedButton
+          <Button
             key="deliver"
             title="Deliver"
             onPress={() => handleStatusUpdate(order.id, 'delivered')}
             style={styles.statusButton}
-            icon="done-all"
+            icon="bag-check-outline"
           />
         );
         break;
@@ -110,12 +147,13 @@ export default function AdminOrdersScreen() {
 
     if (order.status !== 'cancelled' && order.status !== 'delivered') {
       actions.push(
-        <ThemedButton
+        <Button
           key="cancel"
           title="Cancel"
           onPress={() => handleStatusUpdate(order.id, 'cancelled')}
           style={styles.cancelButton}
-          icon="cancel"
+          variant="outline"
+          icon="close-circle-outline"
         />
       );
     }
@@ -133,7 +171,7 @@ export default function AdminOrdersScreen() {
       result = result.filter(order => 
         order.id.toLowerCase().includes(query) ||
         order.userId.toLowerCase().includes(query) ||
-        order.shopId.toLowerCase().includes(query)
+        order.total.toString().includes(query)
       );
     }
 
@@ -210,13 +248,13 @@ export default function AdminOrdersScreen() {
       {/* Search and Filter Bar */}
       <ThemedView style={styles.filterBar}>
         <ThemedView style={styles.searchContainer}>
-          <MaterialIcons name="search" size={24} color="#666" />
+          <Ionicons name="search-outline" size={24} color={colors.tabIconDefault} />
           <TextInput
-            style={styles.searchInput}
+            style={[styles.searchInput, { color: colors.text }]}
             placeholder="Search orders..."
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholderTextColor="#666"
+            placeholderTextColor={colors.tabIconDefault}
           />
         </ThemedView>
 
@@ -252,7 +290,7 @@ export default function AdminOrdersScreen() {
         </ScrollView>
 
         <ThemedView style={styles.sortContainer}>
-          <MaterialIcons name="sort" size={24} color="#666" />
+          <Ionicons name="funnel-outline" size={24} color={colors.tabIconDefault} />
           <TouchableOpacity
             style={styles.sortButton}
             onPress={() => {
@@ -261,7 +299,7 @@ export default function AdminOrdersScreen() {
               setSortBy(options[(currentIndex + 1) % options.length]);
             }}
           >
-            <ThemedText style={styles.sortButtonText}>
+            <ThemedText style={[styles.sortButtonText, { color: colors.text }]}>
               {sortBy.charAt(0).toUpperCase() + sortBy.slice(1)}
             </ThemedText>
           </TouchableOpacity>
@@ -277,26 +315,30 @@ export default function AdminOrdersScreen() {
       >
         {orderError ? (
           <ThemedView style={styles.errorContainer}>
-            <MaterialIcons name="error-outline" size={48} color="#F44336" />
-            <ThemedText style={styles.errorText}>
+            <Ionicons name="alert-circle-outline" size={48} color="#F44336" />
+            <ThemedText style={[styles.errorText, { color: colors.text }]}>
               Error loading orders. Please try again.
             </ThemedText>
-            <ThemedButton
+            <Button
               title="Retry"
               onPress={refreshOrders}
               style={styles.retryButton}
-              icon="refresh"
+              icon="refresh-outline"
             />
           </ThemedView>
         ) : isLoadingOrders ? (
           <ThemedView style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#2196F3" />
-            <ThemedText style={styles.loadingText}>Loading orders...</ThemedText>
+            <ActivityIndicator size="large" color={colors.tint} />
+            <ThemedText style={[styles.loadingText, { color: colors.tabIconDefault }]}>
+              Loading orders...
+            </ThemedText>
           </ThemedView>
         ) : filteredAndSortedOrders.length === 0 ? (
           <ThemedView style={styles.emptyContainer}>
-            <MaterialIcons name="inbox" size={48} color="#666" />
-            <ThemedText style={styles.emptyText}>No orders found</ThemedText>
+            <Ionicons name="file-tray-outline" size={48} color={colors.tabIconDefault} />
+            <ThemedText style={[styles.emptyText, { color: colors.text }]}>
+              No orders found
+            </ThemedText>
           </ThemedView>
         ) : (
           filteredAndSortedOrders.map((order) => (
@@ -313,24 +355,24 @@ export default function AdminOrdersScreen() {
                     </ThemedText>
                   </ThemedView>
                 </ThemedView>
-                <MaterialIcons
-                  name={expandedOrderId === order.id ? 'expand-less' : 'expand-more'}
+                <Ionicons
+                  name={expandedOrderId === order.id ? 'chevron-up-outline' : 'chevron-down-outline'}
                   size={24}
-                  color="#666"
+                  color={colors.tabIconDefault}
                 />
               </TouchableOpacity>
 
               <ThemedView style={styles.orderSummary}>
-                <ThemedText style={styles.orderSummaryText}>
+                <ThemedText style={[styles.orderSummaryText, { color: colors.tabIconDefault }]}>
                   User: {order.userId}
                 </ThemedText>
-                <ThemedText style={styles.orderSummaryText}>
-                  Shop: {order.shopId}
+                <ThemedText style={[styles.orderSummaryText, { color: colors.tabIconDefault }]}>
+                  Items: {order.items.length}
                 </ThemedText>
-                <ThemedText style={styles.orderSummaryText}>
-                  Total: ${order.total.toFixed(2)}
+                <ThemedText style={[styles.orderSummaryText, { color: colors.text }]}>
+                  Total: {formatCurrency(order.total)}
                 </ThemedText>
-                <ThemedText style={styles.orderSummaryText}>
+                <ThemedText style={[styles.orderSummaryText, { color: colors.tabIconDefault }]}>
                   Date: {new Date(order.createdAt).toLocaleDateString()}
                 </ThemedText>
               </ThemedView>

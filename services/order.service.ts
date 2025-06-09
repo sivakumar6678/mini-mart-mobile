@@ -43,13 +43,24 @@ const orderService = {
           name: 'Shipping Address',
           phone: '',
           addressLine1: '',
+          addressLine2: '',
           city: '',
           state: '',
-          zipCode: '',
+          postalCode: '',
           country: 'India',
-          isDefault: false
+          isDefault: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         },
-        paymentMethod: orderData.paymentMethodId,
+        paymentMethod: {
+          id: orderData.paymentMethodId,
+          userId: backendOrder.customer_id.toString(),
+          type: 'upi', // Default type, should be determined from backend
+          details: {},
+          isDefault: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
         createdAt: backendOrder.created_at || new Date().toISOString(),
         updatedAt: backendOrder.updated_at || new Date().toISOString()
       };
@@ -75,12 +86,8 @@ const orderService = {
       if (params?.page) queryParams.append('page', params.page.toString());
       if (params?.limit) queryParams.append('limit', params.limit.toString());
 
-      const response = await fetch(`${API_URL}/orders?${queryParams.toString()}`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch orders');
-      }
-
-      return await response.json();
+      const response = await api.get(`/orders?${queryParams.toString()}`);
+      return response.data;
     } catch (error) {
       console.error('Error fetching orders:', error);
       throw error;
@@ -89,12 +96,8 @@ const orderService = {
 
   async getOrderById(id: string): Promise<Order> {
     try {
-      const response = await fetch(`${API_URL}/orders/${id}`);
-      if (!response.ok) {
-        throw new Error('Order not found');
-      }
-
-      return await response.json();
+      const response = await api.get(`/orders/${id}`);
+      return response.data;
     } catch (error) {
       console.error('Error fetching order:', error);
       throw error;
@@ -103,15 +106,8 @@ const orderService = {
 
   async cancelOrder(id: string): Promise<Order> {
     try {
-      const response = await fetch(`${API_URL}/orders/${id}/cancel`, {
-        method: 'POST',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to cancel order');
-      }
-
-      return await response.json();
+      const response = await api.post(`/orders/${id}/cancel`);
+      return response.data;
     } catch (error) {
       console.error('Error canceling order:', error);
       throw error;
@@ -130,12 +126,8 @@ const orderService = {
     }[];
   }> {
     try {
-      const response = await fetch(`${API_URL}/orders/${id}/track`);
-      if (!response.ok) {
-        throw new Error('Failed to track order');
-      }
-
-      return await response.json();
+      const response = await api.get(`/orders/${id}/track`);
+      return response.data;
     } catch (error) {
       console.error('Error tracking order:', error);
       throw error;
@@ -149,12 +141,8 @@ const orderService = {
     ordersByStatus: { [key: string]: number };
   }> {
     try {
-      const response = await fetch(`${API_URL}/orders/analytics`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch order analytics');
-      }
-
-      return await response.json();
+      const response = await api.get(`/orders/analytics`);
+      return response.data;
     } catch (error) {
       console.error('Error fetching order analytics:', error);
       throw error;
@@ -170,14 +158,8 @@ const orderService = {
       if (params?.page) queryParams.append('page', params.page.toString());
       if (params?.limit) queryParams.append('limit', params.limit.toString());
 
-      const response = await fetch(
-        `${API_URL}/users/${userId}/orders?${queryParams.toString()}`
-      );
-      if (!response.ok) {
-        throw new Error('Failed to fetch order history');
-      }
-
-      return await response.json();
+      const response = await api.get(`/users/${userId}/orders?${queryParams.toString()}`);
+      return response.data;
     } catch (error) {
       console.error('Error fetching order history:', error);
       throw error;
